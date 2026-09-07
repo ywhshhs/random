@@ -102,7 +102,7 @@ RunService.Heartbeat:Connect(function()
     end
     -- closest zombie to us
     local best, bd = nil, math.huge
-    for _, z in ipairs(zombies) do
+    for _, z in ipairs(typeof(zombies) == "table" and zombies or {}) do
         local hd = z:FindFirstChild("head")
         if hd then
             local d = (hd.Position - h.Position).Magnitude
@@ -173,7 +173,7 @@ task.spawn(function()
         for _, c in ipairs(espFolder:GetChildren()) do c:Destroy() end
         if Cfg.ESP then
             if os.clock() - lastScan > 1 then scan() end
-            for _, z in ipairs(zombies) do
+            for _, z in ipairs(typeof(zombies) == "table" and zombies or {}) do
                 local head = z:FindFirstChild("head")
                 if head then
                     local id = z:GetAttribute("simZombieId")
