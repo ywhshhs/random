@@ -159,14 +159,14 @@ RunService.Heartbeat:Connect(function()
     local d = math.floor((rPred - h.Position).Magnitude)
     dbg = ("z:%d -> %s d:%d"):format(#list, target.Name, d)
 end)
--- camera applied LAST in RenderStepped at Camera priority+1: perfectly still, user can't fight it
+-- camera glued to YOU (not old spot): position follows teleport, rotation locked level/forward
+-- fixes: client stuck at enable pos, then snap on disable + can't shoot (camera far from char)
 RunService:BindToRenderStep("ZD_CamLock", Enum.RenderPriority.Camera.Value + 1, function()
     if not Cfg.Lock or not cur or not camLook then return end
+    local h = hrp() if not h then return end
     pcall(function()
-        local cp = Camera.CFrame.Position
-        -- level/forward look (same Y) = bypasses down-look clamp
+        local cp = h.Position + Vector3.new(0, 3, 0) -- eye above your teleported body
         local want = CFrame.new(cp, Vector3.new(camLook.X, cp.Y, camLook.Z))
-        -- hard lock: no lerp on camera itself, only on camLook above -> zero jitter
         Camera.CFrame = want
     end)
 end)
