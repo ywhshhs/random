@@ -37,10 +37,41 @@ local function hrp() local c = LocalPlayer.Character return c and c:FindFirstChi
 local function tool()
     local c = LocalPlayer.Character
     if c then local t = c:FindFirstChildOfClass("Tool") if t then return t end end
+    return nil -- Character ONLY: server ignores Backpack tools in most cases
+end
+local function ensureTool()
+    local t = tool() if t then return t end
+    -- auto-equip first backpack tool
     local b = LocalPlayer:FindFirstChild("Backpack")
-    if b then return b:FindFirstChildOfClass("Tool") end
+    local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    if b and hum then local bt = b:FindFirstChildOfClass("Tool") if bt then pcall(function() hum:EquipTool(bt) end) task.wait(0.2) return tool() end end
     return nil
 end
+-- one-shot test: fires 1 bullet at closest zombie, watches health. Returns string result.
+local function testShot()
+    local h = hrp() if not h then return "no char" end
+    local t = ensureTool() if not t then return "equip a gun in hand first" end
+    local list = zombies() if #list == 0 then return "0 zombies" end
+    table.sort(list, function(a, b) local pa, pb = head(a), head(b) if not pa or not pb then return false end return (pa.Position - h.Position).Magnitude < (pb.Position - h.Position).Magnitude end)
+    local z = list[1] local p = head(z) local id = z:GetAttribute("simZombieId")
+    if not id then return z.Name .. " has NO simZombieId (cannot hit)" end
+    local hp0 = z:GetAttribute("clientHealth")
+    getgenv().ZD_bullet += 1 local idx = getgenv().ZD_bullet
+    local muzzle = h.Position + Vector3.new(0, 1.5, 0)
+    local a1 = CFrame.new(0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1)
+    local a2 = CFrame.new(muzzle, p.Position)
+    local ok, err = pcall(function()
+        shootEvent:FireServer(a1, a2, nil, {{ id, true, math.random(1, 800), idx, 1 }}, t, {}, {{ id, {{{ false, "goldenLight" }}} }}, nil, nil, nil)
+    end)
+    if not ok then return "fire error: " .. tostring(err) end
+    -- face target too (some games validate facing)
+    pcall(function() h.CFrame = CFrame.new(h.Position, Vector3.new(p.Position.X, h.Position.Y, p.Position.Z)) end)
+    pcall(function() t:Activate() end)
+    task.wait(0.6)
+    local hp1 = z:GetAttribute("clientHealth")
+    return ("shot %s #%d idx=%d hp %s -> %s %s"):format(z.Name, id, idx, tostring(hp0), tostring(hp1), (hp1 and hp0 and hp1 < hp0) and "HIT!" or "NO DMG")
+end
+getgenv().ZD_test = testShot
 
 local function isZombie(m)
     if not m or not m:IsA("Model") then return false end
@@ -82,7 +113,7 @@ RunService.Heartbeat:Connect(function()
     if not Cfg.KillAura then return end
     if os.clock() - last < Cfg.Delay then return end
     local h = hrp() if not h then dbg = "no char" return end
-    local t = tool() if not t then dbg = "equip a gun!" return end
+    local t = tool() if not t then t = ensureTool() if not t then dbg = "hold gun in hand!" return end end
     if not shootEvent then dbg = "no shootBullet" return end
     local list = zombies()
     if #list == 0 then dbg = "0 zombies" return end
@@ -142,7 +173,7 @@ end)
 local sg = Instance.new("ScreenGui") sg.Name = "ZD_GUI" sg.ResetOnSpawn = false
 pcall(function() sg.Parent = game:GetService("CoreGui") end)
 if not sg.Parent then sg.Parent = LocalPlayer:WaitForChild("PlayerGui") end
-local f = Instance.new("Frame") f.Size = UDim2.new(0, 200, 0, 150) f.Position = UDim2.new(0, 20, 0.5, -75) f.BackgroundColor3 = Color3.fromRGB(20, 20, 25) f.BorderSizePixel = 0 f.Active = true f.Draggable = true f.Parent = sg
+local f = Instance.new("Frame") f.Size = UDim2.new(0, 200, 0, 185) f.Position = UDim2.new(0, 20, 0.5, -90) f.BackgroundColor3 = Color3.fromRGB(20, 20, 25) f.BorderSizePixel = 0 f.Active = true f.Draggable = true f.Parent = sg
 local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent = f
 local function btn(y, name, fn)
     local b = Instance.new("TextButton") b.Size = UDim2.new(1, -20, 0, 28) b.Position = UDim2.new(0, 10, 0, y) b.BackgroundColor3 = Color3.fromRGB(35, 35, 45) b.TextColor3 = Color3.new(1, 1, 1) b.Font = Enum.Font.Gotham b.TextSize = 13 b.Parent = f
@@ -151,6 +182,9 @@ local function btn(y, name, fn)
     b.MouseButton1Click:Connect(function() Cfg[name] = not Cfg[name] ref() end) ref() return b
 end
 btn(10, "KillAura", "Kill Aura") btn(42, "ESP", "ESP")
-local lb = Instance.new("TextLabel") lb.Size = UDim2.new(1, -20, 0, 60) lb.Position = UDim2.new(0, 10, 0, 78) lb.BackgroundTransparency = 1 lb.TextWrapped = true lb.Font = Enum.Font.Gotham lb.TextSize = 11 lb.TextColor3 = Color3.fromRGB(180, 180, 180) lb.Parent = f
-task.spawn(function() while f.Parent do task.wait(0.3) pcall(function() lb.Text = status .. "\n" .. dbg .. "\nrange:" .. Cfg.Range end) end end)
+local tb = Instance.new("TextButton") tb.Size = UDim2.new(1, -20, 0, 28) tb.Position = UDim2.new(0, 10, 0, 74) tb.BackgroundColor3 = Color3.fromRGB(60, 60, 180) tb.Text = "TEST 1 SHOT" tb.TextColor3 = Color3.new(1, 1, 1) tb.Font = Enum.Font.GothamBold tb.TextSize = 13 tb.Parent = f
+local tbc = Instance.new("UICorner") tbc.CornerRadius = UDim.new(0, 6) tbc.Parent = tb
+tb.MouseButton1Click:Connect(function() task.spawn(function() local r = testShot() lb.Text = r print("[ZD test] " .. r) end) end)
+local lb = Instance.new("TextLabel") lb.Size = UDim2.new(1, -20, 0, 60) lb.Position = UDim2.new(0, 10, 0, 108) lb.BackgroundTransparency = 1 lb.TextWrapped = true lb.Font = Enum.Font.Gotham lb.TextSize = 11 lb.TextColor3 = Color3.fromRGB(180, 180, 180) lb.Parent = f
+task.spawn(function() while f.Parent do task.wait(0.3) pcall(function() if lb.Text:sub(1, 4) ~= "shot" then lb.Text = status .. "\n" .. dbg .. "\nrange:" .. Cfg.Range end end) end end)
 print("[ZD] loaded. " .. status)
