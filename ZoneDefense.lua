@@ -194,12 +194,15 @@ RunService.Heartbeat:Connect(function()
             if d < bd and canSee(eye, z, hd) then best, bd = z, d end
         end
     end
-    aimTarget = best
+    if best ~= aimTarget then
+        aimTarget = best -- new target: snap instantly, no laggy glide-over
+        lookSm = nil
+    end
     local bp = best and aimPart(best) or nil
     local hp = bp and bp.Position or nil
     if hp then
         if not lookSm then lookSm = hp end
-        lookSm = lookSm:Lerp(hp, 0.4) -- smoothing = no jitter
+        lookSm = lookSm:Lerp(hp, 0.65) -- fast smoothing: tracks movers, no jitter
     else
         lookSm = nil
     end
