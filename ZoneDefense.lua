@@ -102,19 +102,38 @@ getgenv().ZD_where = scanWhere
 local dbg = ""
 local cur = nil
 
--- main lock loop: cycle through EVERY zombie so already-spawned ones aren't stuck
+-- main lock: cycle every zombie, teleport above with velocity prediction,
+-- body pitched down at head, camera Scriptable-locked level/forward (no user jitter)
 local cycleI, cycleT = 1, 0
+local camLook = nil -- smoothed look target
+local function setCamLock(on)
+    pcall(function()
+        if on then
+            if Camera.CameraType ~= Enum.CameraType.Scriptable then Camera.CameraType = Enum.CameraType.Scriptable end
+        else
+            if Camera.CameraType == Enum.CameraType.Scriptable then Camera.CameraType = Enum.CameraType.Custom end
+        end
+    end)
+end
+local function predictPos(part)
+    if not part or not part:IsA("BasePart") then return part and part.Position end
+    local v = part.AssemblyLinearVelocity
+    -- ignore crazy velocities / anchored
+    if not v or v.Magnitude > 200 then return part.Position end
+    if part.Anchored then return part.Position end
+    return part.Position + v * 0.15 -- 150ms lead fixes moving-target lag
+end
 RunService.Heartbeat:Connect(function()
-    if not Cfg.Lock then cur = nil return end
+    if not Cfg.Lock then cur = nil camLook = nil setCamLock(false) return end
     local h = hrp() if not h then dbg = "no char" return end
-    local list = zombies() -- fresh scan every frame, includes already-spawned
-    if #list == 0 then dbg = "0 zombies" cur = nil return end
+    local list = zombies()
+    if #list == 0 then dbg = "0 zombies" cur = nil setCamLock(false) return end
+    setCamLock(true)
     table.sort(list, function(a, b)
         local pa, pb = root(a), root(b)
         if not pa or not pb then return false end
         return (pa.Position - h.Position).Magnitude < (pb.Position - h.Position).Magnitude
     end)
-    -- advance cycle every 0.5s so we visit every zombie, not just closest forever
     if os.clock() - cycleT > 0.5 then cycleT = os.clock() cycleI += 1 end
     if cycleI > #list then cycleI = 1 end
     local target = list[cycleI]
@@ -124,21 +143,32 @@ RunService.Heartbeat:Connect(function()
     local r = root(target)
     local hd = head(target)
     if not r or not hd then return end
-    -- body pitched DOWN at head (bypasses down-look clamp which only limits camera)
-    -- camera stays LEVEL/forward so the game doesn't clamp it
-    local topPos = r.Position + Vector3.new(0, Cfg.Height, 0)
+    -- predicted positions (fixes buggy offset on moving targets)
+    local rPred = predictPos(r)
+    local hPred = predictPos(hd)
+    local topPos = rPred + Vector3.new(0, Cfg.Height, 0)
+    -- smooth teleport: snap XZ, keep it stable even if target jitters
     pcall(function()
         h.AssemblyLinearVelocity = Vector3.zero
         h.AssemblyAngularVelocity = Vector3.zero
-        h.CFrame = CFrame.new(topPos, hd.Position) -- character angled down at head
+        h.CFrame = CFrame.new(topPos, hPred) -- body angled down at predicted head
     end)
+    -- smooth the look target so camera doesn't snap every frame
+    if not camLook then camLook = hPred end
+    camLook = camLook:Lerp(hPred, 0.35)
+    local d = math.floor((rPred - h.Position).Magnitude)
+    dbg = ("z:%d -> %s d:%d"):format(#list, target.Name, d)
+end)
+-- camera applied LAST in RenderStepped at Camera priority+1: perfectly still, user can't fight it
+RunService:BindToRenderStep("ZD_CamLock", Enum.RenderPriority.Camera.Value + 1, function()
+    if not Cfg.Lock or not cur or not camLook then return end
     pcall(function()
         local cp = Camera.CFrame.Position
-        -- forward/level look toward head XZ (same height) = no down-clamp
-        Camera.CFrame = CFrame.new(cp, Vector3.new(hd.Position.X, cp.Y, hd.Position.Z))
+        -- level/forward look (same Y) = bypasses down-look clamp
+        local want = CFrame.new(cp, Vector3.new(camLook.X, cp.Y, camLook.Z))
+        -- hard lock: no lerp on camera itself, only on camLook above -> zero jitter
+        Camera.CFrame = want
     end)
-    local d = math.floor((r.Position - h.Position).Magnitude)
-    dbg = ("z:%d -> %s d:%d"):format(#list, target.Name, d)
 end)
 
 -- ESP
