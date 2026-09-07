@@ -147,17 +147,26 @@ RunService.Heartbeat:Connect(function()
     local rPred = predictPos(r)
     local hPred = predictPos(hd)
     local topPos = rPred + Vector3.new(0, Cfg.Height, 0)
-    -- smooth teleport: snap XZ, keep it stable even if target jitters
+    local wantCF = CFrame.new(topPos, hPred) -- body angled down at predicted head
+    -- robust teleport: PivotTo + anchored HRP (plain CFrame gets overwritten by custom controllers)
     pcall(function()
+        local char = LocalPlayer.Character
         h.AssemblyLinearVelocity = Vector3.zero
         h.AssemblyAngularVelocity = Vector3.zero
-        h.CFrame = CFrame.new(topPos, hPred) -- body angled down at predicted head
+        -- break any seated / physics lock that reverts teleports
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hum and hum.Seated then hum.Seated = false end
+        local wasAnchored = h.Anchored
+        h.Anchored = true
+        if char and char.PivotTo then char:PivotTo(wantCF) else h.CFrame = wantCF end
+        h.Anchored = wasAnchored
+        h.AssemblyLinearVelocity = Vector3.zero
     end)
     -- smooth the look target so camera doesn't snap every frame
     if not camLook then camLook = hPred end
     camLook = camLook:Lerp(hPred, 0.35)
     local d = math.floor((rPred - h.Position).Magnitude)
-    dbg = ("z:%d -> %s d:%d"):format(#list, target.Name, d)
+    dbg = ("z:%d -> %s d:%d me:(%d,%d,%d)"):format(#list, target.Name, d, math.floor(h.Position.X), math.floor(h.Position.Y), math.floor(h.Position.Z))
 end)
 -- camera glued to YOU (not old spot): position follows teleport, rotation locked level/forward
 -- fixes: client stuck at enable pos, then snap on disable + can't shoot (camera far from char)
