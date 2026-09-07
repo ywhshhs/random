@@ -19,7 +19,7 @@ local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
-local Cfg = { Lock = false, ESP = true, Sky = 50, Cycle = 0.6, Range = 600 }
+local Cfg = { Lock = false, ESP = true, Sky = 18, Cycle = 0.6, Range = 600 }
 getgenv().ZD = Cfg
 
 local NAMES = { normalZombie=true, normalRedZombie=true, normalBlueZombie=true, crawlingZombie=true, speedZombie=true, blueMetalZombie=true, skeletonZombie=true, cyclopsZombie=true, bigCrawlingZombie=true, exploderZombie=true, armoredZombie=true, tankZombie=true, bigBlackZombie=true, treasureZombie=true, redSlateZombie=true, yellowSlateZombie=true, slimeZombie=true, halfSkeletonZombie=true, ghostZombie=true, spiderZombie=true }
@@ -132,13 +132,15 @@ table.insert(getgenv()._ZDcon, RunService.Heartbeat:Connect(function()
     dbg = ("sky z:%d [%d/%d]=%s"):format(#list, idx, #near, t.Name)
 end))
 
+-- TRUE aim at head (level-look was shooting over them). Sky is only 18 so the
+-- down angle is shallow (~30deg) and stays inside the game's clamp.
 RunService:BindToRenderStep("ZD_Cam", Enum.RenderPriority.Camera.Value + 1, function()
     if not Cfg.Lock or not cur or not lookSm then return end
     local h = HRP() if not h then return end
     pcall(function()
         if Camera.CameraType ~= Enum.CameraType.Scriptable then Camera.CameraType = Enum.CameraType.Scriptable end
         local cp = h.Position + Vector3.new(0, 3, 0)
-        Camera.CFrame = CFrame.new(cp, Vector3.new(lookSm.X, cp.Y, lookSm.Z))
+        Camera.CFrame = CFrame.new(cp, lookSm)
         Camera.Focus = CFrame.new(lookSm)
     end)
 end)
@@ -175,7 +177,7 @@ local function btn(y, key, label)
     local function ref() b.Text = ((Cfg[key] and "[ON] " or "[OFF] ") .. label) end
     b.MouseButton1Click:Connect(function() Cfg[key] = not Cfg[key] ref() end) ref()
 end
-btn(10, "Lock", "Sky+Aim (50)") btn(42, "ESP", "ESP")
+btn(10, "Lock", "Sky+Aim (18)") btn(42, "ESP", "ESP")
 local lb = Instance.new("TextLabel") lb.Size = UDim2.new(1, -20, 0, 25) lb.Position = UDim2.new(0, 10, 0, 76) lb.BackgroundTransparency = 1 lb.Font = Enum.Font.Gotham lb.TextSize = 11 lb.TextColor3 = Color3.fromRGB(180, 180, 180) lb.TextWrapped = true lb.Parent = f
 task.spawn(function() while f.Parent do task.wait(0.3) pcall(function() lb.Text = dbg end) end end)
 print("[ZD v5 sky] loaded")
