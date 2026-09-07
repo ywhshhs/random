@@ -36,10 +36,10 @@ local Config = {
     ZoneRadius = 60,
     DefendZone = false, -- auto-walk/teleport back to zone if you leave it
 
-    -- Combat
+    -- Combat (guns need big range, your log shows 100+ stud shots)
     KillAura = false,
-    KillAuraRange = 25, -- studs from character
-    AttackDelay = 0.15,
+    KillAuraRange = 200, -- studs from character (guns). Set 25 if melee.
+    AttackDelay = 0.12,
     TargetPriority = "Closest", -- "Closest" | "LowestHP" | "HighestHP" | "TreasureFirst" | "ExploderFirst"
     AimAt = "head", -- uses mainCrit attribute, fallback to "head"/"torso"
     HitboxExpand = false,
@@ -262,41 +262,126 @@ local function getBestTarget(maxRange, fovCheck)
     return nil
 end
 
--- // ATTACK - hook your weapon here //
--- Default: activates held Tool + fires click. Replace with your game's Remote if you find it.
--- To find damage remote: in executor run `for _,v in ipairs(game:GetDescendants()) do if v:IsA("RemoteEvent") and (v.Name:lower():find("damage") or v.Name:lower():find("hit") or v.Name:lower():find("attack")) then print(v:GetFullName()) end end`
+-- // ATTACK via shootBullet (from your 06_20_58Z.log) //
+-- shootBullet args (10 total, from log):
+--   1 spread CFrame (0,0,0 + random rot), 2 muzzle CFrame (gun pos -> aim dir),
+--   3 nil, 4 {{ zombieId, true, rand, bulletIndex, headFlag }},
+--   5 Tool, 6 {}, 7 {{ zombieId, {{{false,"goldenLight"}}} }}, 8-10 nil
+-- zombieId = target:GetAttribute("simZombieId") (matches server spawn id)
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local shootEvent = nil
+pcall(function()
+    shootEvent = ReplicatedStorage:WaitForChild("events", 5):WaitForChild("shootBullet", 5)
+end)
+if not shootEvent then
+    pcall(function() shootEvent = ReplicatedStorage.events.shootBullet end)
+end
+
+local bulletIndex = 22 -- observed in log: increments 22,23,24... server may validate order
+local function getTool()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    local t = char:FindFirstChildOfClass("Tool")
+    if t then return t end
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    if bp then return bp:FindFirstChildOfClass("Tool") end
+    return nil
+end
+local function getMuzzlePos(tool)
+    local hrp = myHRP()
+    if tool then
+        -- try Barrel / Handle / gun tip like renderBullet uses (rayStorage Barrel)
+        local barrel = tool:FindFirstChild("Barrel", true) or tool:FindFirstChild("Handle") or tool:FindFirstChild("GunTip", true)
+        if barrel and barrel:IsA("BasePart") then return barrel.Position end
+        -- try model primary part
+        if tool:IsA("Model") and tool.PrimaryPart then return tool.PrimaryPart.Position end
+    end
+    if hrp then return hrp.Position + Vector3.new(0, 1.5, 0) end
+    return Camera and Camera.CFrame.Position or Vector3.new()
+end
 
 local function doAttack(target, part)
     local char = LocalPlayer.Character
     if not char then return end
-    -- 1. Tool activate (melee/gun tool)
-    local tool = char:FindFirstChildOfClass("Tool")
-    if tool then
+    local tool = getTool()
+    -- always activate tool too (fires animations / reload logic)
+    if tool and tool.Parent == char then
         pcall(function() tool:Activate() end)
     end
-    -- 2. If game uses mouse click damage, also fire it:
-    -- (uncomment if needed)
-    -- pcall(function()
-    --     local vim = game:GetService("VirtualInputManager")
-    --     vim:SendMouseButtonEvent(0,0,0,true,game,1)
-    --     task.wait()
-    --     vim:SendMouseButtonEvent(0,0,0,false,game,1)
-    -- end)
-    -- 3. Touch-based melee: touch target with your HRP/tool handle
-    -- handled by KillAura teleport/touch below if you enable it
+    if not shootEvent or not target or not part then return end
+    local zid = target:GetAttribute("simZombieId")
+    if not zid then return end -- can't hit without server id (template / not replicated yet)
+    bulletIndex += 1
+    local muzzle = getMuzzlePos(tool)
+    local aimCF = CFrame.new(muzzle, part.Position)
+    local spreadCF = CFrame.new() -- identity spread = perfect accuracy
+    local ok, err = pcall(function()
+        shootEvent:FireServer(
+            spreadCF,
+            aimCF,
+            nil,
+            {{ zid, true, math.random(1, 800), bulletIndex, 1 }},
+            tool,
+            {},
+            {{ zid, {{{ false, "goldenLight" }}} }},
+            nil, nil, nil
+        )
+    end)
+    if not ok then warn("[ZoneDefense] shoot failed: "..tostring(err)) end
 end
 
--- // KILL AURA LOOP //
+-- multi-target helper: hit EVERY zombie in range (true zone defense)
+local function doAttackAll(maxRange)
+    local hrp = myHRP()
+    if not hrp then return 0 end
+    local tool = getTool()
+    if not tool or not shootEvent then return 0 end
+    local n = 0
+    for _, z in ipairs(getAllZombies()) do
+        if Config.IgnoreExploder and z.Name == "exploderZombie" then continue end
+        local part = getAimPart(z)
+        local zid = z:GetAttribute("simZombieId")
+        if part and zid then
+            local d = (part.Position - hrp.Position).Magnitude
+            local inZone = Config.ZoneCenter and (part.Position - Config.ZoneCenter).Magnitude <= Config.ZoneRadius
+            if d <= maxRange or inZone then
+                bulletIndex += 1
+                local muzzle = getMuzzlePos(tool)
+                pcall(function()
+                    shootEvent:FireServer(
+                        CFrame.new(),
+                        CFrame.new(muzzle, part.Position),
+                        nil,
+                        {{ zid, true, math.random(1, 800), bulletIndex, 1 }},
+                        tool, {},
+                        {{ zid, {{{ false, "goldenLight" }}} }},
+                        nil, nil, nil
+                    )
+                end)
+                n += 1
+                if n >= 20 then break end -- don't spam more than 20/ tick
+            end
+        end
+    end
+    return n
+end
+
+-- // KILL AURA LOOP (now uses shootBullet + simZombieId, hits all in zone) //
 local lastAttack = 0
 RunService.Heartbeat:Connect(function()
     if not Config.Enabled or not Config.KillAura then return end
     if os.clock() - lastAttack < Config.AttackDelay then return end
     local hrp = myHRP()
     if not hrp then return end
+    lastAttack = os.clock()
+    -- 1. Try multi-hit: everything in KillAuraRange OR inside zone
+    local hits = 0
+    pcall(function() hits = doAttackAll(Config.KillAuraRange) end)
+    if hits > 0 then return end
+    -- 2. Fallback single best target (also faces it)
     local target, part = getBestTarget(Config.KillAuraRange, false)
     if target and part then
-        lastAttack = os.clock()
-        -- face target
         hrp.CFrame = CFrame.new(hrp.Position, Vector3.new(part.Position.X, hrp.Position.Y, part.Position.Z))
         doAttack(target, part)
     end
