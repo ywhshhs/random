@@ -8,8 +8,10 @@ local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 
-local Cfg = { ESP = false }
+local Cfg = { ESP = false, Sky = false, SkyH = 20 }
 getgenv().ZD = Cfg
+
+local function HRP() local c = LocalPlayer.Character return c and c:FindFirstChild("HumanoidRootPart") end
 
 local sg = Instance.new("ScreenGui")
 sg.Name = "ZD_GUI"
@@ -55,7 +57,46 @@ local function makeButton(y, text)
 end
 
 local espBtn = makeButton(36, "[OFF] ESP")
-local skyBtn = makeButton(68, "Sky Aimbot")
+local skyBtn = makeButton(68, "[OFF] Sky Aimbot")
+
+-- sky lift only: +20 up, anchored hover. No aiming yet.
+local savedGround, skyPos = nil, nil
+skyBtn.MouseButton1Click:Connect(function()
+    Cfg.Sky = not Cfg.Sky
+    skyBtn.Text = (Cfg.Sky and "[ON] " or "[OFF] ") .. "Sky Aimbot"
+    local h = HRP()
+    if Cfg.Sky then
+        if h then
+            savedGround = h.Position
+            skyPos = savedGround + Vector3.new(0, Cfg.SkyH, 0)
+            local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Seated then hum.Seated = false end
+            h.Anchored = true
+            LocalPlayer.Character:PivotTo(CFrame.new(skyPos))
+            h.AssemblyLinearVelocity = Vector3.zero
+        end
+    else
+        if h then
+            h.Anchored = false
+            if savedGround then
+                LocalPlayer.Character:PivotTo(CFrame.new(savedGround + Vector3.new(0, 3, 0)))
+            end
+            h.AssemblyLinearVelocity = Vector3.zero
+        end
+        savedGround, skyPos = nil, nil
+    end
+end)
+
+-- hold the hover (re-pin if knocked off)
+game:GetService("RunService").Heartbeat:Connect(function()
+    if not Cfg.Sky or not skyPos then return end
+    local h = HRP() if not h then return end
+    if (h.Position - skyPos).Magnitude > 3 then
+        h.Anchored = true
+        LocalPlayer.Character:PivotTo(CFrame.new(skyPos))
+        h.AssemblyLinearVelocity = Vector3.zero
+    end
+end)
 
 -- simple zombie check: Model with torso+head, not a player, not a template
 local function isZombie(m)
