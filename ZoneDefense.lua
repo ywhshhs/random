@@ -49,20 +49,11 @@ end
 
 -- shared zombie state (declared up here so every loop below sees the SAME local)
 local ZNAMES = { normalZombie=true, normalRedZombie=true, normalBlueZombie=true, crawlingZombie=true, speedZombie=true, blueMetalZombie=true, skeletonZombie=true, cyclopsZombie=true, bigCrawlingZombie=true, exploderZombie=true, armoredZombie=true, tankZombie=true, bigBlackZombie=true, treasureZombie=true, redSlateZombie=true, yellowSlateZombie=true, slimeZombie=true, halfSkeletonZombie=true, ghostZombie=true, spiderZombie=true }
-local function inAi(m)
-    local p = m.Parent
-    while p do
-        if p.Name == "ObjectCache" then return false end
-        if p == Workspace:FindFirstChild("ai") then return true end
-        p = p.Parent
-    end
-    return false
-end
+-- NOTE: live zombies ALSO live under ObjectCache folders (ai has 7+ of them),
+-- so we must NOT ban the folder. Templates are filtered by far-away position instead.
 local function isZombie(m)
     if not m or not m:IsA("Model") then return false end
     if Players:GetPlayerFromCharacter(m) then return false end
-    local p = m.Parent
-    while p do if p.Name == "ObjectCache" then return false end p = p.Parent end
     -- any position part counts (some variants like spider lack torso/head)
     local rp = m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("torso") or m:FindFirstChild("head")
     if not rp then
@@ -71,12 +62,12 @@ local function isZombie(m)
         end
     end
     if not rp then return false end
-    if math.abs(rp.Position.X) > 50000 then return false end
+    -- templates are parked ~16M studs out; live ones are near the map
+    if math.abs(rp.Position.X) > 50000 or math.abs(rp.Position.Y) > 50000 then return false end
     local hp = m:GetAttribute("clientHealth")
     if hp ~= nil and hp <= 0 then return false end
-    -- inside ai folder = zombie, no extra proof needed (map models live elsewhere)
-    if inAi(m) then return true end
-    -- outside ai: need proof (attrs, known name, or health bar)
+    -- every zombie enemy name ends with "Zombie" (boss is the exception, caught below)
+    if m.Name:sub(-6) == "Zombie" then return true end
     if m:GetAttribute("mainCrit") ~= nil or m:GetAttribute("simZombieId") ~= nil then return true end
     if ZNAMES[m.Name] then return true end
     if m:FindFirstChild("healthBar", true) then return true end
