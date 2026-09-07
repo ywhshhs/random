@@ -20,6 +20,23 @@ local RunService = game:GetService("RunService")
 
 local function HRP() local c = LocalPlayer.Character return c and c:FindFirstChild("HumanoidRootPart") end
 
+-- wall check: clear line from our eye to a target part
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local function canSee(fromPos, targetModel, targetPart)
+    if not targetPart then return false end
+    local excl = {}
+    local c = LocalPlayer.Character
+    if c then table.insert(excl, c) end
+    table.insert(excl, targetModel)
+    rayParams.FilterDescendantsInstances = excl
+    local dir = targetPart.Position - fromPos
+    local res = Workspace:Raycast(fromPos, dir, rayParams)
+    -- visible = nothing solid in the way
+    return res == nil
+end
+
 -- shared zombie state (declared up here so every loop below sees the SAME local)
 local function isZombie(m)
     if not m or not m:IsA("Model") then return false end
@@ -134,13 +151,14 @@ RunService.Heartbeat:Connect(function()
         LocalPlayer.Character:PivotTo(CFrame.new(skyPos))
         h.AssemblyLinearVelocity = Vector3.zero
     end
-    -- closest zombie to us
+    -- closest VISIBLE zombie to us
     local best, bd = nil, math.huge
+    local eye = h.Position + Vector3.new(0, 3, 0)
     for _, z in ipairs(typeof(zombies) == "table" and zombies or {}) do
         local hd = z:FindFirstChild("head")
         if hd then
             local d = (hd.Position - h.Position).Magnitude
-            if d < bd then best, bd = z, d end
+            if d < bd and canSee(eye, z, hd) then best, bd = z, d end
         end
     end
     aimTarget = best
