@@ -40,23 +40,51 @@ end
 local function root(m) return m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("torso") or head(m) end
 
 getgenv().ZD_dbg = { scanned = 0, models = 0, ai = "?" }
-local function zombies()
+-- cached scan: fast ai-folder path + slow workspace fallback, refreshed in background
+-- (scanning Workspace:GetDescendants() every Heartbeat lagged the game -> showed 0)
+local cache, cacheT = {}, 0
+local function scanNow()
     local out, seen = {}, {}
     local scanned, models = 0, 0
-    -- scan whole workspace always (ai folder may not hold live zombies at runtime)
-    for _, d in ipairs(Workspace:GetDescendants()) do
-        scanned += 1
-        if d:IsA("Model") then
-            models += 1
-            if not seen[d] and isZombie(d) then seen[d] = true table.insert(out, d) if #out >= 300 then break end end
+    local ai = Workspace:FindFirstChild("ai")
+    getgenv().ZD_dbg.ai = tostring(ai and ai:GetFullName() or "NO-AI")
+    if ai then
+        for _, d in ipairs(ai:GetDescendants()) do
+            scanned += 1
+            if d:IsA("Model") then models += 1
+                if not seen[d] and isZombie(d) then seen[d] = true table.insert(out, d) if #out >= 300 then break end end
+            end
+        end
+    end
+    -- fallback: whole workspace, but only if ai gave nothing (live zombies elsewhere?)
+    if #out == 0 then
+        for _, d in ipairs(Workspace:GetDescendants()) do
+            scanned += 1
+            if d:IsA("Model") then models += 1
+                if not seen[d] and isZombie(d) then seen[d] = true table.insert(out, d) if #out >= 300 then break end end
+            end
         end
     end
     getgenv().ZD_dbg.scanned = scanned
     getgenv().ZD_dbg.models = models
-    getgenv().ZD_dbg.ai = tostring(Workspace:FindFirstChild("ai") and Workspace.ai:GetFullName() or "NO-AI")
+    cache, cacheT = out, os.clock()
     return out
 end
+local function zombies()
+    -- use cache if fresh (<0.5s), else rescan (also catches already-spawned)
+    if os.clock() - cacheT < 0.5 and #cache >= 0 and cacheT > 0 then
+        -- still validate cached ones are alive (cheap)
+        local alive = {}
+        for _, z in ipairs(cache) do
+            if z.Parent and (z:GetAttribute("clientHealth") or 1) > 0 then table.insert(alive, z) end
+        end
+        if #alive > 0 then return alive end
+    end
+    return scanNow()
+end
 getgenv().ZD_get = zombies
+getgenv().ZD_rescan = scanNow
+task.spawn(function() while true do task.wait(0.5) pcall(scanNow) end end)
 -- one-line scanner: prints where zombie-like models actually are
 local function scanWhere()
     local counts = {}
@@ -96,15 +124,18 @@ RunService.Heartbeat:Connect(function()
     local r = root(target)
     local hd = head(target)
     if not r or not hd then return end
-    -- teleport above their HRP
+    -- body pitched DOWN at head (bypasses down-look clamp which only limits camera)
+    -- camera stays LEVEL/forward so the game doesn't clamp it
+    local topPos = r.Position + Vector3.new(0, Cfg.Height, 0)
     pcall(function()
         h.AssemblyLinearVelocity = Vector3.zero
         h.AssemblyAngularVelocity = Vector3.zero
-        h.CFrame = CFrame.new(r.Position + Vector3.new(0, Cfg.Height, 0), hd.Position)
+        h.CFrame = CFrame.new(topPos, hd.Position) -- character angled down at head
     end)
-    -- point camera at head (cursor = center screen = head for autofire)
     pcall(function()
-        Camera.CFrame = CFrame.new(Camera.CFrame.Position, hd.Position)
+        local cp = Camera.CFrame.Position
+        -- forward/level look toward head XZ (same height) = no down-clamp
+        Camera.CFrame = CFrame.new(cp, Vector3.new(hd.Position.X, cp.Y, hd.Position.Z))
     end)
     local d = math.floor((r.Position - h.Position).Magnitude)
     dbg = ("z:%d -> %s d:%d"):format(#list, target.Name, d)
