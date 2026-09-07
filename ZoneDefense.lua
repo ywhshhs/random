@@ -20,6 +20,16 @@ local RunService = game:GetService("RunService")
 
 local function HRP() local c = LocalPlayer.Character return c and c:FindFirstChild("HumanoidRootPart") end
 
+-- aim part: head first, then any solid part (covers non-standard variants)
+local function aimPart(m)
+    local p = m:FindFirstChild("head") or m:FindFirstChild("torso") or m:FindFirstChild("HumanoidRootPart")
+    if p and p:IsA("BasePart") then return p end
+    for _, c in ipairs(m:GetChildren()) do
+        if c:IsA("BasePart") then return c end
+    end
+    return nil
+end
+
 -- wall check: clear line from our eye to a target part
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -43,10 +53,15 @@ local function isZombie(m)
     if Players:GetPlayerFromCharacter(m) then return false end
     local p = m.Parent
     while p do if p.Name == "ObjectCache" then return false end p = p.Parent end
-    local torso = m:FindFirstChild("torso")
-    local head = m:FindFirstChild("head")
-    if not torso or not head then return false end
-    if math.abs(torso.Position.X) > 50000 then return false end
+    -- any position part counts (some variants like spider lack torso/head)
+    local rp = m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("torso") or m:FindFirstChild("head")
+    if not rp then
+        for _, c in ipairs(m:GetChildren()) do
+            if c:IsA("BasePart") then rp = c break end
+        end
+    end
+    if not rp then return false end
+    if math.abs(rp.Position.X) > 50000 then return false end
     local hp = m:GetAttribute("clientHealth")
     if hp ~= nil and hp <= 0 then return false end
     return true
@@ -155,14 +170,15 @@ RunService.Heartbeat:Connect(function()
     local best, bd = nil, math.huge
     local eye = h.Position + Vector3.new(0, 3, 0)
     for _, z in ipairs(typeof(zombies) == "table" and zombies or {}) do
-        local hd = z:FindFirstChild("head")
+        local hd = aimPart(z)
         if hd then
             local d = (hd.Position - h.Position).Magnitude
             if d < bd and canSee(eye, z, hd) then best, bd = z, d end
         end
     end
     aimTarget = best
-    local hp = best and best:FindFirstChild("head") and best:FindFirstChild("head").Position or nil
+    local bp = best and aimPart(best) or nil
+    local hp = bp and bp.Position or nil
     if hp then
         if not lookSm then lookSm = hp end
         lookSm = lookSm:Lerp(hp, 0.4) -- smoothing = no jitter
@@ -196,7 +212,7 @@ task.spawn(function()
         if Cfg.ESP then
             if os.clock() - lastScan > 1 then scan() end
             for _, z in ipairs(typeof(zombies) == "table" and zombies or {}) do
-                local head = z:FindFirstChild("head")
+                local head = aimPart(z)
                 if head then
                     local id = z:GetAttribute("simZombieId")
                     local hp, mx = z:GetAttribute("clientHealth"), z:GetAttribute("maxHealth")
