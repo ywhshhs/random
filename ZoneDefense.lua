@@ -2,6 +2,11 @@
 
 pcall(function()
     local o = game:GetService("CoreGui"):FindFirstChild("ZD_GUI") if o then o:Destroy() end
+    local o2 = game:GetService("CoreGui"):FindFirstChild("ZD_ESP") if o2 then o2:Destroy() end
+    game:GetService("RunService"):UnbindFromRenderStep("ZD_Cam")
+    if workspace.CurrentCamera.CameraType == Enum.CameraType.Scriptable then
+        workspace.CurrentCamera.CameraType = Enum.CameraType.Custom
+    end
 end)
 
 local Players = game:GetService("Players")
