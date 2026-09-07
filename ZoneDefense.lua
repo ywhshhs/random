@@ -92,7 +92,7 @@ local espBtn = makeButton(36, "[OFF] ESP")
 local skyBtn = makeButton(68, "[OFF] Sky Aimbot")
 
 -- sky lift only: +20 up, anchored hover. No aiming yet.
-local savedGround, skyPos = nil, nil
+local savedGround, skyPos, aimTarget, lookSm = nil, nil, nil, nil
 skyBtn.MouseButton1Click:Connect(function()
     Cfg.Sky = not Cfg.Sky
     skyBtn.Text = (Cfg.Sky and "[ON] " or "[OFF] ") .. "Sky Aimbot"
@@ -121,7 +121,6 @@ skyBtn.MouseButton1Click:Connect(function()
 end)
 
 -- hold the hover (re-pin if knocked off) + pick closest target while up
-local aimTarget, lookSm = nil, nil
 RunService.Heartbeat:Connect(function()
     if not Cfg.Sky or not skyPos then aimTarget, lookSm = nil, nil return end
     local h = HRP() if not h then return end
