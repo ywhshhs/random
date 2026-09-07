@@ -8,7 +8,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
-getgenv().ZD = getgenv().ZD or { KillAura = false, ESP = false, Range = 200, Delay = 0.15, ShowId = true }
+getgenv().ZD = getgenv().ZD or { KillAura = false, ESP = false, Range = 2000, Delay = 0.15, ShowId = true }
+if getgenv().ZD.Range < 1000 then getgenv().ZD.Range = 2000 end -- old 200 config was too short, force far
 local Cfg = getgenv().ZD
 
 -- remote
@@ -122,11 +123,14 @@ RunService.Heartbeat:Connect(function()
         if not pa or not pb then return false end
         return (pa.Position - h.Position).Magnitude < (pb.Position - h.Position).Magnitude
     end)
-    local fired, withId, noId = 0, 0, 0
+    local fired, withId, noId, noHead, far = 0, 0, 0, 0, 0
+    local nearest = math.huge
+    for _, z in ipairs(list) do local p = head(z) if p then local d = (p.Position - h.Position).Magnitude if d < nearest then nearest = d end end end
     for _, z in ipairs(list) do
         if fired >= 3 then break end
-        local p = head(z) if not p then continue end
-        if (p.Position - h.Position).Magnitude > Cfg.Range then continue end
+        local p = head(z) if not p then noHead += 1 continue end
+        local d = (p.Position - h.Position).Magnitude
+        if d > Cfg.Range then far += 1 continue end
         local id = z:GetAttribute("simZombieId")
         if not id then noId += 1 continue end
         withId += 1
@@ -137,7 +141,8 @@ RunService.Heartbeat:Connect(function()
         end)
         fired += 1
     end
-    dbg = ("z:%d fired:%d id:%d noid:%d idx:%d gun:%s"):format(#list, fired, withId, noId, getgenv().ZD_bullet, t.Name)
+    local nearTxt = nearest == math.huge and "inf" or tostring(math.floor(nearest))
+    dbg = ("z:%d fired:%d id:%d noid:%d near:%s far:%d nohead:%d idx:%d %s"):format(#list, fired, withId, noId, nearTxt, far, noHead, getgenv().ZD_bullet, t.Name)
 end)
 
 -- ESP
