@@ -7,7 +7,8 @@ local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
-getgenv().ZD = getgenv().ZD or { Lock = false, ESP = true, Height = 7, Range = 2000 }
+getgenv().ZD = getgenv().ZD or { Lock = false, ESP = true, Height = 13, Range = 2000 }
+if (getgenv().ZD.Height or 0) < 13 then getgenv().ZD.Height = 13 end
 local Cfg = getgenv().ZD
 
 local function hrp() local c = LocalPlayer.Character return c and c:FindFirstChild("HumanoidRootPart") end
@@ -73,24 +74,24 @@ getgenv().ZD_where = scanWhere
 local dbg = ""
 local cur = nil
 
--- main lock loop: closest zombie -> teleport above HRP -> camera look at head
+-- main lock loop: cycle through EVERY zombie so already-spawned ones aren't stuck
+local cycleI, cycleT = 1, 0
 RunService.Heartbeat:Connect(function()
     if not Cfg.Lock then cur = nil return end
     local h = hrp() if not h then dbg = "no char" return end
-    local list = zombies()
+    local list = zombies() -- fresh scan every frame, includes already-spawned
     if #list == 0 then dbg = "0 zombies" cur = nil return end
     table.sort(list, function(a, b)
         local pa, pb = root(a), root(b)
         if not pa or not pb then return false end
         return (pa.Position - h.Position).Magnitude < (pb.Position - h.Position).Magnitude
     end)
-    -- first one within range
-    local target = nil
-    for _, z in ipairs(list) do
-        local r = root(z)
-        if r and (r.Position - h.Position).Magnitude <= Cfg.Range then target = z break end
-    end
-    if not target then target = list[1] end
+    -- advance cycle every 0.5s so we visit every zombie, not just closest forever
+    if os.clock() - cycleT > 0.5 then cycleT = os.clock() cycleI += 1 end
+    if cycleI > #list then cycleI = 1 end
+    local target = list[cycleI]
+    if not target or not target.Parent then cycleI = 1 target = list[1] end
+    if not target then return end
     cur = target
     local r = root(target)
     local hd = head(target)
