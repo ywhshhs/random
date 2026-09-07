@@ -12,20 +12,25 @@ local Cfg = getgenv().ZD
 
 local function hrp() local c = LocalPlayer.Character return c and c:FindFirstChild("HumanoidRootPart") end
 
+local ZNAMES = { normalZombie=true, normalRedZombie=true, normalBlueZombie=true, crawlingZombie=true, speedZombie=true, blueMetalZombie=true, skeletonZombie=true, cyclopsZombie=true, bigCrawlingZombie=true, exploderZombie=true, armoredZombie=true, tankZombie=true, bigBlackZombie=true, treasureZombie=true, redSlateZombie=true, yellowSlateZombie=true, slimeZombie=true, halfSkeletonZombie=true, ghostZombie=true, spiderZombie=true }
 local function isZombie(m)
     if not m or not m:IsA("Model") then return false end
     if Players:GetPlayerFromCharacter(m) then return false end
-    if m:GetAttribute("mainCrit") == nil and m:GetAttribute("mainTorsoName") == nil then return false end
     local p = m.Parent
     while p do if p.Name == "ObjectCache" then return false end p = p.Parent end
-    local r = m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("torso")
-    if r and r:IsA("BasePart") then
-        local v = r.Position
-        if math.abs(v.X) > 100000 or math.abs(v.Y) > 100000 or math.abs(v.Z) > 100000 then return false end
-    else return false end
+    -- must have a position part (HRP or torso/head), not template far away
+    local r = m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("torso") or m:FindFirstChild("head")
+    if not r or not r:IsA("BasePart") then return false end
+    local v = r.Position
+    if math.abs(v.X) > 100000 or math.abs(v.Y) > 100000 or math.abs(v.Z) > 100000 then return false end
     local hp = m:GetAttribute("clientHealth")
     if hp ~= nil and hp <= 0 then return false end
-    return true
+    -- accept if ANY of: custom attrs, zombie name, healthBar gui
+    if m:GetAttribute("mainCrit") ~= nil or m:GetAttribute("mainTorsoName") ~= nil then return true end
+    if m:GetAttribute("simZombieId") ~= nil then return true end
+    if ZNAMES[m.Name] then return true end
+    if m:FindFirstChild("healthBar", true) then return true end
+    return false
 end
 
 local function head(m)
@@ -33,16 +38,37 @@ local function head(m)
 end
 local function root(m) return m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("torso") or head(m) end
 
+getgenv().ZD_dbg = { scanned = 0, models = 0, ai = "?" }
 local function zombies()
     local out, seen = {}, {}
-    local ai = Workspace:FindFirstChild("ai")
-    local src = ai or Workspace
-    for _, d in ipairs(src:GetDescendants()) do
-        if d:IsA("Model") and not seen[d] and isZombie(d) then seen[d] = true table.insert(out, d) if #out >= 300 then break end end
+    local scanned, models = 0, 0
+    -- scan whole workspace always (ai folder may not hold live zombies at runtime)
+    for _, d in ipairs(Workspace:GetDescendants()) do
+        scanned += 1
+        if d:IsA("Model") then
+            models += 1
+            if not seen[d] and isZombie(d) then seen[d] = true table.insert(out, d) if #out >= 300 then break end end
+        end
     end
+    getgenv().ZD_dbg.scanned = scanned
+    getgenv().ZD_dbg.models = models
+    getgenv().ZD_dbg.ai = tostring(Workspace:FindFirstChild("ai") and Workspace.ai:GetFullName() or "NO-AI")
     return out
 end
 getgenv().ZD_get = zombies
+-- one-line scanner: prints where zombie-like models actually are
+local function scanWhere()
+    local counts = {}
+    for _, d in ipairs(Workspace:GetDescendants()) do
+        if d:IsA("Model") and (d:GetAttribute("mainCrit") ~= nil or d:GetAttribute("simZombieId") ~= nil or d:FindFirstChild("healthBar", true)) then
+            local k = (d.Parent and d.Parent:GetFullName() or "?") .. " | " .. d.Name
+            counts[k] = (counts[k] or 0) + 1
+        end
+    end
+    for k, v in pairs(counts) do print(v .. "x " .. k) end
+    print("ai=" .. getgenv().ZD_dbg.ai .. " scanned=" .. getgenv().ZD_dbg.scanned .. " models=" .. getgenv().ZD_dbg.models)
+end
+getgenv().ZD_where = scanWhere
 
 local dbg = ""
 local cur = nil
@@ -125,5 +151,5 @@ local function btn(y, name, label)
 end
 btn(10, "Lock", "Teleport-Aim") btn(42, "ESP", "ESP")
 local lb = Instance.new("TextLabel") lb.Size = UDim2.new(1, -20, 0, 40) lb.Position = UDim2.new(0, 10, 0, 76) lb.BackgroundTransparency = 1 lb.TextWrapped = true lb.Font = Enum.Font.Gotham lb.TextSize = 11 lb.TextColor3 = Color3.fromRGB(180, 180, 180) lb.Parent = f
-task.spawn(function() while f.Parent do task.wait(0.3) pcall(function() lb.Text = dbg .. "\nh:" .. Cfg.Height end) end end)
+task.spawn(function() while f.Parent do task.wait(0.3) pcall(function() lb.Text = dbg .. "\n" .. getgenv().ZD_dbg.ai .. " m:" .. getgenv().ZD_dbg.models .. " h:" .. Cfg.Height end) end end)
 print("[ZD] teleport-aim loaded")
