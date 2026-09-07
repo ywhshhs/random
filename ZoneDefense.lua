@@ -34,4 +34,23 @@ title.TextSize = 15
 title.TextColor3 = Color3.new(1, 1, 1)
 title.Parent = f
 
+local function makeButton(y, text)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, -20, 0, 28)
+    b.Position = UDim2.new(0, 10, 0, y)
+    b.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+    b.Text = text
+    b.TextColor3 = Color3.new(1, 1, 1)
+    b.Font = Enum.Font.Gotham
+    b.TextSize = 13
+    b.Parent = f
+    local u = Instance.new("UICorner")
+    u.CornerRadius = UDim.new(0, 6)
+    u.Parent = b
+    return b
+end
+
+local espBtn = makeButton(36, "ESP")
+local skyBtn = makeButton(68, "Sky Aimbot")
+
 print("[ZD] ui shell loaded")
