@@ -11,6 +11,8 @@ local LocalPlayer = Players.LocalPlayer
 local Cfg = { ESP = false, Sky = false, SkyH = 20 }
 getgenv().ZD = Cfg
 
+local RunService = game:GetService("RunService")
+
 local function HRP() local c = LocalPlayer.Character return c and c:FindFirstChild("HumanoidRootPart") end
 
 local sg = Instance.new("ScreenGui")
@@ -83,19 +85,52 @@ skyBtn.MouseButton1Click:Connect(function()
             end
             h.AssemblyLinearVelocity = Vector3.zero
         end
-        savedGround, skyPos = nil, nil
+        savedGround, skyPos, aimTarget, lookSm = nil, nil, nil, nil
+        workspace.CurrentCamera.CameraType = Enum.CameraType.Custom
     end
 end)
 
--- hold the hover (re-pin if knocked off)
-game:GetService("RunService").Heartbeat:Connect(function()
-    if not Cfg.Sky or not skyPos then return end
+-- hold the hover (re-pin if knocked off) + pick closest target while up
+local aimTarget, lookSm = nil, nil
+RunService.Heartbeat:Connect(function()
+    if not Cfg.Sky or not skyPos then aimTarget, lookSm = nil, nil return end
     local h = HRP() if not h then return end
     if (h.Position - skyPos).Magnitude > 3 then
         h.Anchored = true
         LocalPlayer.Character:PivotTo(CFrame.new(skyPos))
         h.AssemblyLinearVelocity = Vector3.zero
     end
+    -- closest zombie to us
+    local best, bd = nil, math.huge
+    for _, z in ipairs(zombies) do
+        local hd = z:FindFirstChild("head")
+        if hd then
+            local d = (hd.Position - h.Position).Magnitude
+            if d < bd then best, bd = z, d end
+        end
+    end
+    aimTarget = best
+    local hp = best and best:FindFirstChild("head") and best:FindFirstChild("head").Position or nil
+    if hp then
+        if not lookSm then lookSm = hp end
+        lookSm = lookSm:Lerp(hp, 0.4) -- smoothing = no jitter
+    else
+        lookSm = nil
+    end
+end)
+
+-- camera: full free pitch (no axis locked), applied last so the game can't fight it.
+-- Scriptable only stops YOUR mouse fighting the script, not the pitch range.
+RunService:BindToRenderStep("ZD_Cam", Enum.RenderPriority.Camera.Value + 1, function()
+    if not Cfg.Sky or not aimTarget or not lookSm then return end
+    local h = HRP() if not h then return end
+    local cam = workspace.CurrentCamera
+    pcall(function()
+        if cam.CameraType ~= Enum.CameraType.Scriptable then cam.CameraType = Enum.CameraType.Scriptable end
+        local eye = h.Position + Vector3.new(0, 3, 0)
+        cam.CFrame = CFrame.new(eye, lookSm) -- true 3D aim, Y free
+        cam.Focus = CFrame.new(lookSm)
+    end)
 end)
 
 -- simple zombie check: Model with torso+head, not a player, not a template
