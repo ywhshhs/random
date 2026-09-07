@@ -13,7 +13,7 @@ local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 
-local Cfg = { ESP = false, Sky = false, SkyH = 20 }
+local Cfg = { ESP = false, Sky = false, SkyH = 30 }
 getgenv().ZD = Cfg
 
 local RunService = game:GetService("RunService")
@@ -202,7 +202,8 @@ RunService.Heartbeat:Connect(function()
     local hp = bp and bp.Position or nil
     if hp then
         if not lookSm then lookSm = hp end
-        lookSm = lookSm:Lerp(hp, 0.65) -- fast smoothing: tracks movers, no jitter
+        if (lookSm - hp).Magnitude > 20 then lookSm = hp end -- big jump: snap, don't trail
+        lookSm = lookSm:Lerp(hp, 0.8) -- max practical: instant feel, still jitter-free
     else
         lookSm = nil
     end
