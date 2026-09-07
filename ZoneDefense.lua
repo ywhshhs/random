@@ -15,6 +15,36 @@ local RunService = game:GetService("RunService")
 
 local function HRP() local c = LocalPlayer.Character return c and c:FindFirstChild("HumanoidRootPart") end
 
+-- shared zombie state (declared up here so every loop below sees the SAME local)
+local function isZombie(m)
+    if not m or not m:IsA("Model") then return false end
+    if Players:GetPlayerFromCharacter(m) then return false end
+    local p = m.Parent
+    while p do if p.Name == "ObjectCache" then return false end p = p.Parent end
+    local torso = m:FindFirstChild("torso")
+    local head = m:FindFirstChild("head")
+    if not torso or not head then return false end
+    if math.abs(torso.Position.X) > 50000 then return false end
+    local hp = m:GetAttribute("clientHealth")
+    if hp ~= nil and hp <= 0 then return false end
+    return true
+end
+
+local zombies, lastScan = {}, 0
+local function scan()
+    local out = {}
+    for _, d in ipairs(Workspace:GetDescendants()) do
+        if d:IsA("Model") and isZombie(d) then
+            table.insert(out, d)
+            if #out >= 200 then break end
+        end
+    end
+    zombies, lastScan = out, os.clock()
+end
+task.spawn(function() while true do task.wait(1) pcall(scan) end end)
+scan()
+getgenv().ZD_get = function() return zombies end
+
 local sg = Instance.new("ScreenGui")
 sg.Name = "ZD_GUI"
 sg.ResetOnSpawn = false
@@ -132,36 +162,6 @@ RunService:BindToRenderStep("ZD_Cam", Enum.RenderPriority.Camera.Value + 1, func
         cam.Focus = CFrame.new(lookSm)
     end)
 end)
-
--- simple zombie check: Model with torso+head, not a player, not a template
-local function isZombie(m)
-    if not m or not m:IsA("Model") then return false end
-    if Players:GetPlayerFromCharacter(m) then return false end
-    local p = m.Parent
-    while p do if p.Name == "ObjectCache" then return false end p = p.Parent end
-    local torso = m:FindFirstChild("torso")
-    local head = m:FindFirstChild("head")
-    if not torso or not head then return false end
-    if math.abs(torso.Position.X) > 50000 then return false end
-    local hp = m:GetAttribute("clientHealth")
-    if hp ~= nil and hp <= 0 then return false end
-    return true
-end
-
-local zombies, lastScan = {}, 0
-local function scan()
-    local out = {}
-    for _, d in ipairs(Workspace:GetDescendants()) do
-        if d:IsA("Model") and isZombie(d) then
-            table.insert(out, d)
-            if #out >= 200 then break end
-        end
-    end
-    zombies, lastScan = out, os.clock()
-end
-task.spawn(function() while true do task.wait(1) pcall(scan) end end)
-scan()
-getgenv().ZD_get = function() return zombies end
 
 local espFolder = Instance.new("Folder")
 espFolder.Name = "ZD_ESP"
