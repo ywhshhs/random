@@ -48,6 +48,16 @@ local function canSee(fromPos, targetModel, targetPart)
 end
 
 -- shared zombie state (declared up here so every loop below sees the SAME local)
+local ZNAMES = { normalZombie=true, normalRedZombie=true, normalBlueZombie=true, crawlingZombie=true, speedZombie=true, blueMetalZombie=true, skeletonZombie=true, cyclopsZombie=true, bigCrawlingZombie=true, exploderZombie=true, armoredZombie=true, tankZombie=true, bigBlackZombie=true, treasureZombie=true, redSlateZombie=true, yellowSlateZombie=true, slimeZombie=true, halfSkeletonZombie=true, ghostZombie=true, spiderZombie=true }
+local function inAi(m)
+    local p = m.Parent
+    while p do
+        if p.Name == "ObjectCache" then return false end
+        if p == Workspace:FindFirstChild("ai") then return true end
+        p = p.Parent
+    end
+    return false
+end
 local function isZombie(m)
     if not m or not m:IsA("Model") then return false end
     if Players:GetPlayerFromCharacter(m) then return false end
@@ -64,19 +74,35 @@ local function isZombie(m)
     if math.abs(rp.Position.X) > 50000 then return false end
     local hp = m:GetAttribute("clientHealth")
     if hp ~= nil and hp <= 0 then return false end
-    return true
+    -- inside ai folder = zombie, no extra proof needed (map models live elsewhere)
+    if inAi(m) then return true end
+    -- outside ai: need proof (attrs, known name, or health bar)
+    if m:GetAttribute("mainCrit") ~= nil or m:GetAttribute("simZombieId") ~= nil then return true end
+    if ZNAMES[m.Name] then return true end
+    if m:FindFirstChild("healthBar", true) then return true end
+    return false
 end
 
 local zombies, lastScan = {}, 0
 local function scan()
     local out = {}
-    for _, d in ipairs(Workspace:GetDescendants()) do
+    local ai = Workspace:FindFirstChild("ai")
+    local src = ai or Workspace
+    for _, d in ipairs(src:GetDescendants()) do
         if d:IsA("Model") and isZombie(d) then
             table.insert(out, d)
             if #out >= 200 then break end
         end
     end
     zombies, lastScan = out, os.clock()
+end
+getgenv().ZD_list = function()
+    local counts = {}
+    for _, z in ipairs(typeof(zombies) == "table" and zombies or {}) do
+        counts[z.Name] = (counts[z.Name] or 0) + 1
+    end
+    for n, c in pairs(counts) do print(c .. "x " .. n) end
+    print("total: " .. #zombies)
 end
 task.spawn(function() while true do task.wait(1) pcall(scan) end end)
 scan()
@@ -87,9 +113,10 @@ sg.Name = "ZD_GUI"
 sg.ResetOnSpawn = false
 sg.Parent = game:GetService("CoreGui")
 
+local countLb = nil
 local f = Instance.new("Frame")
-f.Size = UDim2.new(0, 200, 0, 110)
-f.Position = UDim2.new(0, 20, 0.5, -55)
+f.Size = UDim2.new(0, 200, 0, 130)
+f.Position = UDim2.new(0, 20, 0.5, -65)
 f.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
 f.BorderSizePixel = 0
 f.Active = true
@@ -219,7 +246,10 @@ task.spawn(function()
                     local txt = z.Name .. " #" .. (id ~= nil and tostring(id) or "?")
                     if hp ~= nil and mx ~= nil then
                         txt = txt .. " " .. math.floor(hp) .. "/" .. math.floor(mx)
+                    else
+                        txt = txt .. " (no hp)"
                     end
+                    txt = txt .. " [" .. head.Name .. "]"
                     local bb = Instance.new("BillboardGui")
                     bb.Adornee = head
                     bb.Size = UDim2.new(0, 220, 0, 25)
@@ -243,6 +273,24 @@ end)
 espBtn.MouseButton1Click:Connect(function()
     Cfg.ESP = not Cfg.ESP
     espBtn.Text = (Cfg.ESP and "[ON] " or "[OFF] ") .. "ESP"
+end)
+
+countLb = Instance.new("TextLabel")
+countLb.Size = UDim2.new(1, -20, 0, 18)
+countLb.Position = UDim2.new(0, 10, 0, 100)
+countLb.BackgroundTransparency = 1
+countLb.Text = "zombies: 0"
+countLb.Font = Enum.Font.Gotham
+countLb.TextSize = 11
+countLb.TextColor3 = Color3.fromRGB(150, 255, 150)
+countLb.Parent = f
+task.spawn(function()
+    while f.Parent do
+        task.wait(0.5)
+        pcall(function()
+            countLb.Text = "zombies: " .. #zombies
+        end)
+    end
 end)
 
 print("[ZD] ui shell loaded")
