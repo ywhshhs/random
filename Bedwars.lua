@@ -16,12 +16,15 @@ Watermark:SetVisibility(true)
 KeybindList:SetVisibility(false)
 
 local CombatTab = Window:Page({ Name = "Combat", Columns = 2, Subtabs = false })
+local WorldTab = Window:Page({ Name = "World", Columns = 2, Subtabs = false })
 local MovementTab = Window:Page({ Name = "Movement", Columns = 2, Subtabs = false })
 local VisualsTab = Window:Page({ Name = "Visuals", Columns = 2, Subtabs = false })
 local SettingsTab = Library:CreateSettingsPage(Window, Watermark, KeybindList)
 
 -- live feature state (written by UI callbacks below)
-local S = { KillAura = false, AuraRange = 16, TeamCheck = true, WallCheck = true }
+local S = { KillAura = false, AuraRange = 16, TeamCheck = true, WallCheck = true,
+    Scaffold = false, PlaceDelay = 0.12, Tower = false, AutoEquip = true,
+    Nuker = false, NukeRadius = 8, NukeDelay = 0.2, BedsOnly = false }
 
 do -- Combat
     local AuraSection = CombatTab:Section({ Name = "Kill Aura", Side = 1 })
@@ -31,6 +34,20 @@ do -- Combat
     local TargetSection = CombatTab:Section({ Name = "Target", Side = 2 })
     TargetSection:Toggle({ Name = "Team Check", Flag = "TeamCheck", Default = true, Callback = function(v) S.TeamCheck = v end })
     TargetSection:Toggle({ Name = "Wall Check", Flag = "WallCheck", Default = true, Callback = function(v) S.WallCheck = v end })
+end
+
+do -- World: Scaffold + Nuker (shapes from your solo log)
+    local Sc = WorldTab:Section({ Name = "Scaffold", Side = 1 })
+    Sc:Toggle({ Name = "Enabled", Flag = "Scaffold", Default = false, Callback = function(v) S.Scaffold = v end })
+    Sc:Slider({ Name = "Place Delay", Min = 0.05, Max = 0.5, Default = 0.12, Suffix = "s", Decimals = 2, Flag = "PlaceDelay", Callback = function(v) S.PlaceDelay = v end })
+    Sc:Toggle({ Name = "Tower Mode", Flag = "Tower", Default = false, Callback = function(v) S.Tower = v end })
+    Sc:Toggle({ Name = "Auto Equip Blocks", Flag = "AutoEquip", Default = true, Callback = function(v) S.AutoEquip = v end })
+
+    local Nk = WorldTab:Section({ Name = "Nuker", Side = 2 })
+    Nk:Toggle({ Name = "Enabled", Flag = "Nuker", Default = false, Callback = function(v) S.Nuker = v end })
+    Nk:Slider({ Name = "Radius", Min = 3, Max = 14, Default = 8, Suffix = "st", Decimals = 0, Flag = "NukeRadius", Callback = function(v) S.NukeRadius = v end })
+    Nk:Slider({ Name = "Hit Delay", Min = 0.05, Max = 1, Default = 0.2, Suffix = "s", Decimals = 2, Flag = "NukeDelay", Callback = function(v) S.NukeDelay = v end })
+    Nk:Toggle({ Name = "Beds Only", Flag = "BedsOnly", Default = false, Callback = function(v) S.BedsOnly = v end })
 end
 
 do -- Movement (demo wiring)
@@ -145,5 +162,148 @@ task.spawn(function()
     end
 end)
 
+-- Scaffold + Nuker engine (block shapes copied from your solo log)
+local BlockNet = ReplicatedStorage.rbxts_include.node_modules["@easy-games"]["block-engine"].node_modules["@rbxts"].net.out._NetManaged
+local PlaceBlock = BlockNet:WaitForChild("PlaceBlock")
+local DamageBlock = BlockNet:WaitForChild("DamageBlock")
+
+local GRID = 3
+local function toGrid(w) return Vector3.new(math.round(w.X / GRID), math.round(w.Y / GRID), math.round(w.Z / GRID)) end
+local placedAt = {} -- gridKey -> time (don't refire placed cells)
+local lastPlaced = nil
+
+local TOOL_JUNK = { "sword", "pickaxe", "axe", "shears", "bow", "hammer", "scythe", "saber", "katana", "balloon", "pearl", "gadget", "kit" }
+local BLOCK_HINT = { "wool", "ceramic", "glass", "stone", "obsidian", "blastproof", "plank" }
+local function looksBlockTool(name)
+    local n = name:lower()
+    for _, j in ipairs(TOOL_JUNK) do if n:find(j, 1, true) then return false end end
+    for _, b in ipairs(BLOCK_HINT) do if n:find(b, 1, true) then return true end end
+    return false -- unknown: don't touch
+end
+local function ensureBlocks()
+    local c = LocalPlayer.Character
+    if not c then return false end
+    local held = c:FindFirstChildOfClass("Tool")
+    if held and looksBlockTool(held.Name) then return true end
+    if not S.AutoEquip then return held ~= nil end
+    local hum = c:FindFirstChildOfClass("Humanoid")
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    if hum and bp then
+        for _, t in ipairs(bp:GetChildren()) do
+            if t:IsA("Tool") and looksBlockTool(t.Name) then
+                pcall(function() hum:EquipTool(t) end)
+                task.wait(0.15)
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local downParams = RaycastParams.new()
+downParams.FilterType = Enum.RaycastFilterType.Exclude
+task.spawn(function()
+    local lastPlace = 0
+    while true do
+        task.wait(0.03)
+        if S.Scaffold then
+            local h = myHRP()
+            if h and tick() - lastPlace >= S.PlaceDelay and ensureBlocks() then
+                downParams.FilterDescendantsInstances = { LocalPlayer.Character }
+                local hit = Workspace:Raycast(h.Position, Vector3.new(0, -9, 0), downParams)
+                local target, place
+                if hit and hit.Normal.Y > 0.5 then
+                    -- standing over a block: fill the air cell below our feet
+                    target = toGrid(hit.Position - Vector3.new(0, 1.5, 0))
+                    place = target + Vector3.new(0, 1, 0)
+                elseif lastPlaced then
+                    -- bridging over void: extend from last placed block toward facing
+                    local f = h.CFrame.LookVector
+                    f = Vector3.new(f.X, 0, f.Z)
+                    if f.Magnitude > 0.01 then
+                        f = f.Unit
+                        place = lastPlaced + Vector3.new(math.round(f.X), 0, math.round(f.Z))
+                        if place == lastPlaced then place = lastPlaced + Vector3.new(0, 0, 0) end
+                        target = lastPlaced
+                    end
+                end
+                if place and target then
+                    local key = place.X .. "," .. place.Y .. "," .. place.Z
+                    if not placedAt[key] or tick() - placedAt[key] > 30 then
+                        local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
+                        local blockType = tool and tool.Name or "wool_white"
+                        local ok = pcall(function()
+                            PlaceBlock:InvokeServer({
+                                position = place,
+                                blockType = blockType,
+                                blockData = 0,
+                                mouseBlockInfo = {
+                                    target = { blockRef = { blockPosition = target }, hitPosition = hit and hit.Position or (target * GRID + Vector3.new(0, 1.5, 0)), hitNormal = Vector3.new(0, 1, 0) },
+                                    placementPosition = place,
+                                },
+                            })
+                        end)
+                        if ok then
+                            lastPlace = tick()
+                            placedAt[key] = tick()
+                            lastPlaced = place
+                        end
+                    end
+                end
+            end
+        else
+            lastPlaced = nil
+        end
+    end
+end)
+
+-- Nuker: 3-stud cubes (+ bed parts) in radius, Invoke capped per tick
+local nukeCache, nukeScan = {}, 0
+local function rescanBlocks()
+    local found = {}
+    for _, d in ipairs(Workspace:GetDescendants()) do
+        if d:IsA("BasePart") then
+            local s = d.Size
+            local isCube = math.abs(s.X - 3) < 0.2 and math.abs(s.Y - 3) < 0.2 and math.abs(s.Z - 3) < 0.2
+            local nm = (d.Name .. " " .. (d.Parent and d.Parent.Name or "")):lower()
+            if isCube or nm:find("bed", 1, true) then
+                table.insert(found, { part = d, bed = nm:find("bed", 1, true) ~= nil })
+                if #found > 400 then break end
+            end
+        end
+    end
+    nukeCache, nukeScan = found, os.clock()
+end
+task.spawn(function()
+    while true do
+        task.wait(0.05)
+        if S.Nuker then
+            local h = myHRP()
+            if h then
+                if os.clock() - nukeScan > 1 then rescanBlocks() end
+                local sent = 0
+                for _, e in ipairs(nukeCache) do
+                    if sent >= 3 then break end
+                    local p = e.part
+                    if p and p.Parent then
+                        if (not S.BedsOnly or e.bed) and (p.Position - h.Position).Magnitude <= S.NukeRadius then
+                            local g = toGrid(p.Position)
+                            pcall(function()
+                                DamageBlock:InvokeServer({
+                                    blockRef = { blockPosition = g },
+                                    hitPosition = p.Position,
+                                    hitNormal = Vector3.yAxis,
+                                })
+                            end)
+                            sent += 1
+                        end
+                    end
+                end
+                if sent > 0 then task.wait(S.NukeDelay) end
+            end
+        end
+    end
+end)
+
 getgenv().BW_Lib = Library
-print("[BW] thugsense ui + killaura loaded")
+print("[BW] thugsense ui + killaura + scaffold + nuker loaded")
