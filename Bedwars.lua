@@ -24,6 +24,24 @@ src = src:gsub("xorEncode%(String: string, key: string%)", "xorEncode(String, ke
 local nviz
 src, nviz = src:gsub("task%.wait%(0%.15%)", "task.wait(0.03)")
 print("[BW] visualizer-wait patches:", nviz)
+-- patch 4: Expand slider 4 -> 6 max, default 2 -> 3
+local function spliceOnce(hay, needle, repl, tag)
+    local a, b = hay:find(needle, 1, true) -- plain find, no patterns
+    assert(a, "[BW] patch missed: " .. tag)
+    return hay:sub(1, a - 1) .. repl .. hay:sub(b + 1)
+end
+src = spliceOnce(src,
+    ", MaximumValue = 4,\nDefaultValue = 2 }",
+    ", MaximumValue = 6,\nDefaultValue = 3 }", "expand")
+-- patch 5: non-legit scaffold runs cells in parallel task.spawns (race order).
+-- Run them inline instead: strict i=1..N order = closest block ALWAYS first.
+src = spliceOnce(src,
+    "for i = 1, (Config.Scaffold.Expand.Value * 3)  do\n\t\t\t\ttask.spawn(function()\n",
+    "for i = 1, (Config.Scaffold.Expand.Value * 3)  do\n", "spawn-head")
+src = spliceOnce(src,
+    "position = _cjyccGXLoFx})\n\t\t\t\t\t\tend\n\n\t\t\t\t\tend)\n\t\t\t\tend",
+    "position = _cjyccGXLoFx})\n\t\t\t\t\t\tend\n\t\t\t\tend", "spawn-tail")
+print("[BW] expand+scaffold-order patched")
 
 assert(not src:find("String: string", 1, true), "[BW] annotation strip failed")
 
