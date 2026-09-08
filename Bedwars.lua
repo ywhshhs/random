@@ -20,6 +20,10 @@ local src = game:HttpGet("https://raw.githubusercontent.com/ywhshhs/sss/main/als
 src = src:gsub("^if false%s+then%s+local _unused = 0%s+end%s*", "", 1)
 -- patch 2: strip the only type-annotated signature in the file
 src = src:gsub("xorEncode%(String: string, key: string%)", "xorEncode(String, key)")
+-- patch 3: scaffold visualizer waits 0.15s per cell -> 0.03s (both branches)
+local nviz
+src, nviz = src:gsub("task%.wait%(0%.15%)", "task.wait(0.03)")
+print("[BW] visualizer-wait patches:", nviz)
 
 assert(not src:find("String: string", 1, true), "[BW] annotation strip failed")
 
@@ -28,4 +32,19 @@ if not fn then
     error("[BW] AlSploit failed to compile: " .. tostring(err))
 end
 print("[BW] AlSploit compiled, running...")
-return fn()
+task.spawn(function()
+    pcall(fn)
+    -- scaffold was server/client-throttled by BLOCK_PLACE_CPS: pin it open.
+    -- (same thing its NoPlacementCPS toggle does; we just enforce it)
+    task.wait(3)
+    while true do
+        pcall(function()
+            local m = require(game:GetService("ReplicatedStorage").TS["shared-constants"])
+            local t = m.CpsConstants or m.CPSConstants or m
+            if t and t.BLOCK_PLACE_CPS ~= nil and t.BLOCK_PLACE_CPS ~= math.huge then
+                t.BLOCK_PLACE_CPS = math.huge
+            end
+        end)
+        task.wait(5)
+    end
+end)
