@@ -122,12 +122,13 @@ task.spawn(function()
         -- defensive clamps (survive raw-table edits bypassing BW.set)
         VW.Range = math.clamp(tonumber(VW.Range) or 18, 5, 30)
         VW.HitSlow = math.clamp(tonumber(VW.HitSlow) or 0, 0, 20)
+        VW.MaxTargets = math.clamp(math.floor(tonumber(VW.MaxTargets) or 3), 1, 6)
         if VW.Killaura then
             local ok = pcall(function()
                 local h = myHRP()
                 if not h then return end
-                -- nearest alive enemy
-                local best, bestD = nil, VW.Range
+                -- candidates: alive enemies in range (+wall check)
+                local cands = {}
                 for _, p in ipairs(Players:GetPlayers()) do
                     if p ~= LP then
                         if VW.TeamCheck and p.Team ~= nil and LP.Team ~= nil and p.Team == LP.Team then continue end
@@ -136,46 +137,61 @@ task.spawn(function()
                         local hum = c and c:FindFirstChildOfClass("Humanoid")
                         if hrp and hum and hum.Health > 0 then
                             local d = (hrp.Position - h.Position).Magnitude
-                            if d <= bestD then
+                            if d <= VW.Range then
                                 if VW.WallCheck then
                                     wallP.FilterDescendantsInstances = { LP.Character, c }
                                     if Workspace:Raycast(Cam.CFrame.Position, hrp.Position - Cam.CFrame.Position, wallP) then continue end
                                 end
-                                best, bestD = c, d
+                                table.insert(cands, { c = c, hrp = hrp, d = d, hp = hum.Health })
                             end
                         end
                     end
                 end
-                if best then
-                    local root = best:FindFirstChild("HumanoidRootPart")
-                    local sword = heldSword()
-                    if root and sword then
-                        local weapon = invInstance(sword)
-                        -- VW reach pull: only past 14st, minus 14 (not 14.4)
-                        local selfpos = h.Position
-                        if VW.Range > 14 and bestD > 14.4 then
-                            selfpos = h.Position + (CFrame.lookAt(h.Position, root.Position).LookVector * (bestD - 14))
-                        end
-                        -- VW pacing: stamp controller to server-now (0.02s floor)
-                        if SwordControl then
-                            pcall(function()
-                                SwordControl.lastAttack = Workspace:GetServerTimeNow()
-                                SwordControl.lastSwingServerTime = Workspace:GetServerTimeNow()
-                            end)
-                        end
-                        local dir = (root.Position - Cam.CFrame.Position).Unit
-                        SwingMiss:FireServer({ weapon = weapon, chargeRatio = 0 })
-                        SwordHit:FireServer({
-                            weapon = weapon,
-                            chargedAttack = { chargeRatio = 0 },
-                            entityInstance = best,
-                            validate = {
-                                raycast = { cameraPosition = attackValue(Cam.CFrame.Position), cursorDirection = attackValue(dir) },
-                                targetPosition = attackValue(root.Position),
-                                selfPosition = attackValue(selfpos),
-                            },
-                        })
-                        -- VW spear double-hit
+                if VW.LowHP then
+                    table.sort(cands, function(a, b) return a.hp < b.hp end)
+                else
+                    table.sort(cands, function(a, b) return a.d < b.d end)
+                end
+                local sword = heldSword()
+                local weapon = sword and invInstance(sword) or nil
+                if not weapon then return end -- no sword, no packets (never swing empty-handed)
+                local hits = 0
+                for _, t in ipairs(cands) do
+                    if hits >= VW.MaxTargets then break end
+                    local root = t.hrp
+                    -- face target so the swing story holds together
+                    if VW.FaceTarget then
+                        pcall(function()
+                            h.CFrame = CFrame.new(h.Position, Vector3.new(root.Position.X, h.Position.Y, root.Position.Z))
+                        end)
+                    end
+                    -- VW reach pull: only past 14st, minus 14 (not 14.4)
+                    local selfpos = h.Position
+                    if VW.Range > 14 and t.d > 14.4 then
+                        selfpos = h.Position + (CFrame.lookAt(h.Position, root.Position).LookVector * (t.d - 14))
+                    end
+                    -- VW pacing: stamp controller to server-now (0.02s floor)
+                    if SwordControl then
+                        pcall(function()
+                            SwordControl.lastAttack = Workspace:GetServerTimeNow()
+                            SwordControl.lastSwingServerTime = Workspace:GetServerTimeNow()
+                        end)
+                    end
+                    local dir = (root.Position - Cam.CFrame.Position).Unit
+                    SwingMiss:FireServer({ weapon = weapon, chargeRatio = 0 })
+                    SwordHit:FireServer({
+                        weapon = weapon,
+                        chargedAttack = { chargeRatio = 0 },
+                        entityInstance = t.c,
+                        validate = {
+                            raycast = { cameraPosition = attackValue(Cam.CFrame.Position), cursorDirection = attackValue(dir) },
+                            targetPosition = attackValue(root.Position),
+                            selfPosition = attackValue(selfpos),
+                        },
+                    })
+                    hits += 1
+                    -- VW spear double-hit on the first target only
+                    if hits == 1 then
                         local bp = LP:FindFirstChild("Backpack")
                         if bp then for _, x in ipairs(bp:GetChildren()) do
                             if x:IsA("Tool") and x.Name:find("spear", 1, true) then
@@ -184,7 +200,7 @@ task.spawn(function()
                                 SwordHit:FireServer({
                                     weapon = invInstance(x),
                                     chargedAttack = { chargeRatio = 0 },
-                                    entityInstance = best,
+                                    entityInstance = t.c,
                                     validate = {
                                         raycast = { cameraPosition = attackValue(Cam.CFrame.Position), cursorDirection = attackValue(dir) },
                                         targetPosition = attackValue(root.Position),
@@ -232,7 +248,7 @@ task.spawn(function()
         end end
         return t and t.Name or "wool_white"
     end
-    local towerCache, lastTower = {}, 0
+    local towerCache, lastTower, lastBox = {}, 0, 0
     local lastSafe = nil
     local rp = RaycastParams.new()
     rp.FilterType = Enum.RaycastFilterType.Exclude
@@ -241,6 +257,32 @@ task.spawn(function()
         local h = c and c:FindFirstChild("HumanoidRootPart")
         local hum = c and c:FindFirstChildOfClass("Humanoid")
         if not h or not hum or hum.Health <= 0 then return end
+        -- BOX: 3x3 ring (minus center) around feet, stacked boxheight layers
+        VWS.BoxHeight = math.clamp(math.floor(tonumber(VWS.BoxHeight) or 2), 1, 3)
+        VWS.BoxDelay = math.clamp(tonumber(VWS.BoxDelay) or 0.15, 0.05, 0.5)
+        if VWS.Box then
+            if tick() - (lastBox or 0) >= VWS.BoxDelay then
+                local feet = h.Position - Vector3.new(0, h.Size.Y / 2 + hum.HipHeight + 1, 0)
+                local base = gridOf(feet)
+                local placed = false
+                for layer = 0, VWS.BoxHeight - 1 do
+                    for dx = -1, 1 do for dz = -1, 1 do
+                        if not (dx == 0 and dz == 0) then -- ring, keep center open
+                            local g = base + Vector3.new(dx, layer, dz)
+                            local key = g.X .. "," .. g.Y .. "," .. g.Z
+                            if not towerCache[key] or tick() - towerCache[key] > 10 then
+                                towerCache[key] = tick()
+                                pcall(function()
+                                    BlockPlacing:InvokeServer({ blockType = heldBlock(), blockData = 0, position = g })
+                                end)
+                                placed = true
+                            end
+                        end
+                    end end
+                end
+                if placed then lastBox = tick() end
+            end
+        end
         -- TOWER: pillar straight up while jumping (grid coords, verified rule)
         VWS.TowerDelay = math.clamp(tonumber(VWS.TowerDelay) or 0.1, 0.03, 0.5)
         VWS.EdgeDist = math.clamp(tonumber(VWS.EdgeDist) or 2.5, 1, 6)
@@ -286,15 +328,21 @@ local SCHEMA = {
     ["killaura.hitslow"]  = { t = "n", d = 0, min = 0, max = 20 },
     ["killaura.wallcheck"] = { t = "b", d = true },
     ["killaura.teamcheck"] = { t = "b", d = true },
+    ["killaura.maxtargets"] = { t = "n", d = 3, min = 1, max = 6 },
+    ["killaura.facetarget"] = { t = "b", d = true },
+    ["killaura.lowhp"]      = { t = "b", d = false },
     scaf = { desc = "Scaffold extras" },
     ["scaf.tower"]      = { t = "b", d = false },
     ["scaf.towerdelay"] = { t = "n", d = 0.1, min = 0.03, max = 0.5 },
     ["scaf.safewalk"]   = { t = "b", d = false },
     ["scaf.edgedist"]   = { t = "n", d = 2.5, min = 1, max = 6 },
+    ["scaf.box"]        = { t = "b", d = false },
+    ["scaf.boxheight"]  = { t = "n", d = 2, min = 1, max = 3 },
+    ["scaf.boxdelay"]   = { t = "n", d = 0.15, min = 0.05, max = 0.5 },
 }
 local STORE = {}
-local SECMAP = { killaura = { tab = "VW", keys = { enabled = "Killaura", range = "Range", hitslow = "HitSlow", wallcheck = "WallCheck", teamcheck = "TeamCheck" } },
-                 scaf = { tab = "VW_Scaf", keys = { tower = "Tower", towerdelay = "TowerDelay", safewalk = "SafeWalk", edgedist = "EdgeDist" } } }
+local SECMAP = { killaura = { tab = "VW", keys = { enabled = "Killaura", range = "Range", hitslow = "HitSlow", wallcheck = "WallCheck", teamcheck = "TeamCheck", maxtargets = "MaxTargets", facetarget = "FaceTarget", lowhp = "LowHP" } },
+                 scaf = { tab = "VW_Scaf", keys = { tower = "Tower", towerdelay = "TowerDelay", safewalk = "SafeWalk", edgedist = "EdgeDist", box = "Box", boxheight = "BoxHeight", boxdelay = "BoxDelay" } } }
 local function readLive(sec, key)
     local m = SECMAP[sec]
     local tab = getgenv()[m.tab]
