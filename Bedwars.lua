@@ -222,7 +222,8 @@ task.spawn(function()
                 local look = h.CFrame.LookVector
                 for i = 1, (S.Expand or 2) * 3 do
                     local want = feetBase + Vector3.new(look.X * i, 0, look.Z * i)
-                    local pos = snap3(want)
+                    -- GRID coords (124,23,112), NOT world (372,69,336) -- server drops world coords
+                    local pos = toGrid(want)
                     local key = pos.X .. "," .. pos.Y .. "," .. pos.Z
                     if not placedAt[key] or tick() - placedAt[key] > 5 then
                         pcall(function()
