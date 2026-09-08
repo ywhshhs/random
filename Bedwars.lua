@@ -208,7 +208,8 @@ task.spawn(function()
         task.wait(0.03)
         if S.Scaffold then
             local h = myHRP()
-            if h and tick() - lastPlace >= S.PlaceDelay and ensureBlocks() then
+            local effDelay = S.Tower and math.min(S.PlaceDelay, 0.05) or S.PlaceDelay
+            if h and tick() - lastPlace >= effDelay and ensureBlocks() then
                 downParams.FilterDescendantsInstances = { LocalPlayer.Character }
                 local hit = Workspace:Raycast(h.Position, Vector3.new(0, -9, 0), downParams)
                 local target, place
