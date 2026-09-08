@@ -36,7 +36,7 @@ src = spliceOnce(src,
 -- patch 5: non-legit scaffold runs cells in parallel task.spawns (race order).
 -- Run them inline instead: strict i=1..N order = closest block ALWAYS first.
 src = spliceOnce(src,
-    "for i = 1, (Config.Scaffold.Expand.Value * 3)  do\n\t\t\t\ttask.spawn(function()\n",
+    "for i = 1, (Config.Scaffold.Expand.Value * 3)  do\n\t\t\t\t\ttask.spawn(function()\n",
     "for i = 1, (Config.Scaffold.Expand.Value * 3)  do\n", "spawn-head")
 src = spliceOnce(src,
     "position = _cjyccGXLoFx})\n\t\t\t\t\t\tend\n\n\t\t\t\t\tend)\n\t\t\t\tend",
