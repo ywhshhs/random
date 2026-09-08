@@ -434,5 +434,96 @@ for k, r in pairs(SCHEMA) do if r.t then
     local sec, key = k:match("^([^.]+)%.([^.]+)$")
     if readLive(sec, key) == nil then writeLive(sec, key, r.d) else BW.get(k) end
 end end
+-- Visible panel for OUR options (AlSploit UI can't show them). Auto-built from SCHEMA
+-- so every future option appears here with zero extra code. Dark orange, draggable.
+local function buildPanel()
+    local CoreGui = game:GetService("CoreGui")
+    local old = CoreGui:FindFirstChild("VW_Panel") if old then old:Destroy() end
+    local ORANGE = Color3.fromRGB(255, 122, 26)
+    local sg = Instance.new("ScreenGui") sg.Name = "VW_Panel" sg.ResetOnSpawn = false sg.Parent = CoreGui
+    local win = Instance.new("Frame")
+    win.Size = UDim2.new(0, 230, 0, 300)
+    win.Position = UDim2.new(1, -250, 0.5, -150)
+    win.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+    win.BorderSizePixel = 0 win.Active = true win.Draggable = true win.Parent = sg
+    local wc = Instance.new("UICorner") wc.CornerRadius = UDim.new(0, 10) wc.Parent = win
+    local ws = Instance.new("UIStroke") ws.Color = ORANGE ws.Thickness = 1 ws.Transparency = 0.4 ws.Parent = win
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, -16, 0, 30) title.Position = UDim2.new(0, 12, 0, 0)
+    title.BackgroundTransparency = 1 title.Text = "VW extras" title.Font = Enum.Font.GothamBold
+    title.TextSize = 16 title.TextXAlignment = Enum.TextXAlignment.Left title.TextColor3 = ORANGE title.Parent = win
+    local scroll = Instance.new("ScrollingFrame")
+    scroll.Size = UDim2.new(1, -16, 1, -38) scroll.Position = UDim2.new(0, 8, 0, 34)
+    scroll.BackgroundTransparency = 1 scroll.ScrollBarThickness = 3 scroll.ScrollBarImageColor3 = ORANGE
+    scroll.CanvasSize = UDim2.new(0, 0, 0, 0) scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y scroll.Parent = win
+    local lay = Instance.new("UIListLayout") lay.Padding = UDim.new(0, 6) lay.SortOrder = Enum.SortOrder.LayoutOrder lay.Parent = scroll
+    local order = 0
+    local function header(t)
+        order += 1
+        local h = Instance.new("TextLabel")
+        h.Size = UDim2.new(1, -4, 0, 18) h.BackgroundTransparency = 1 h.LayoutOrder = order
+        h.Text = t:upper() h.Font = Enum.Font.GothamBold h.TextSize = 12
+        h.TextXAlignment = Enum.TextXAlignment.Left h.TextColor3 = ORANGE h.Parent = scroll
+    end
+    local function toggleRow(path, label)
+        order += 1
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.new(1, -4, 0, 34) b.LayoutOrder = order
+        b.BackgroundColor3 = Color3.fromRGB(28, 28, 34) b.Text = "" b.Parent = scroll
+        local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent = b
+        local l = Instance.new("TextLabel")
+        l.Size = UDim2.new(1, -56, 1, 0) l.Position = UDim2.new(0, 10, 0, 0)
+        l.BackgroundTransparency = 1 l.Text = label l.Font = Enum.Font.Gotham l.TextSize = 13
+        l.TextXAlignment = Enum.TextXAlignment.Left l.TextColor3 = Color3.fromRGB(235, 235, 235) l.Parent = b
+        local dot = Instance.new("Frame")
+        dot.Size = UDim2.new(0, 16, 0, 16) dot.Position = UDim2.new(1, -28, 0.5, -8)
+        dot.Parent = b
+        local dc = Instance.new("UICorner") dc.CornerRadius = UDim.new(1, 0) dc.Parent = dot
+        local function ref() dot.BackgroundColor3 = BW.get(path) and ORANGE or Color3.fromRGB(60, 60, 70) end
+        b.MouseButton1Click:Connect(function() BW.set(path, not BW.get(path)) ref() end)
+        ref()
+    end
+    local function sliderRow(path, label, min, max)
+        order += 1
+        local holder = Instance.new("Frame")
+        holder.Size = UDim2.new(1, -4, 0, 50) holder.LayoutOrder = order
+        holder.BackgroundColor3 = Color3.fromRGB(28, 28, 34) holder.Parent = scroll
+        local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent = holder
+        local l = Instance.new("TextLabel")
+        l.Size = UDim2.new(1, -20, 0, 18) l.Position = UDim2.new(0, 10, 0, 4)
+        l.BackgroundTransparency = 1 l.Font = Enum.Font.Gotham l.TextSize = 12
+        l.TextXAlignment = Enum.TextXAlignment.Left l.TextColor3 = Color3.fromRGB(235, 235, 235) l.Parent = holder
+        local bar = Instance.new("TextButton")
+        bar.Size = UDim2.new(1, -20, 0, 14) bar.Position = UDim2.new(0, 10, 0, 28)
+        bar.BackgroundColor3 = Color3.fromRGB(50, 50, 60) bar.Text = "" bar.AutoButtonColor = false bar.Parent = holder
+        local bc = Instance.new("UICorner") bc.CornerRadius = UDim.new(1, 0) bc.Parent = bar
+        local fill = Instance.new("Frame")
+        fill.BackgroundColor3 = ORANGE fill.BorderSizePixel = 0 fill.Parent = bar
+        local fc = Instance.new("UICorner") fc.CornerRadius = UDim.new(1, 0) fc.Parent = fill
+        local function ref()
+            local v = BW.get(path)
+            l.Text = label .. ": " .. string.format("%.2f", v)
+            fill.Size = UDim2.new(math.clamp((v - min) / (max - min), 0, 1), 0, 1, 0)
+        end
+        bar.MouseButton1Down:Connect(function(x)
+            local ax, aw = bar.AbsolutePosition.X, math.max(bar.AbsoluteSize.X, 1)
+            BW.set(path, min + math.clamp((x - ax) / aw, 0, 1) * (max - min))
+            ref()
+        end)
+        ref()
+    end
+    local shorts = { ["killaura.enabled"] = "Aura", ["killaura.range"] = "Range", ["killaura.hitslow"] = "HitSlow", ["killaura.wallcheck"] = "Walls", ["killaura.teamcheck"] = "Teams", ["killaura.maxtargets"] = "Targets", ["killaura.facetarget"] = "Face", ["killaura.lowhp"] = "LowHP", ["scaf.tower"] = "Tower", ["scaf.towerdelay"] = "TowerDelay", ["scaf.safewalk"] = "SafeWalk", ["scaf.edgedist"] = "EdgeDist", ["scaf.box"] = "Box", ["scaf.boxheight"] = "BoxHeight", ["scaf.boxdelay"] = "BoxDelay" }
+    local keys = {}
+    for k, r in pairs(SCHEMA) do if r.t then table.insert(keys, k) end end
+    table.sort(keys)
+    local lastSec = nil
+    for _, k in ipairs(keys) do
+        local sec = k:match("^([^.]+)")
+        if sec ~= lastSec then header(sec == "killaura" and "Kill Aura" or "Scaffold") lastSec = sec end
+        local r = SCHEMA[k]
+        if r.t == "b" then toggleRow(k, shorts[k] or k) else sliderRow(k, shorts[k] or k, r.min, r.max) end
+    end
+end
+task.spawn(function() task.wait(6) pcall(buildPanel) end)
 print("[BW] VW-grade killaura injected (disable AlSploit Killaura)")
 print("[BW] config ready: getgenv().BW.show()")
