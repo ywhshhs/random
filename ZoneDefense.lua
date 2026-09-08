@@ -65,7 +65,10 @@ local function isZombie(m)
     -- templates are parked ~16M studs out; live ones are near the map
     if math.abs(rp.Position.X) > 50000 or math.abs(rp.Position.Y) > 50000 then return false end
     local hp = m:GetAttribute("clientHealth")
-    if hp ~= nil and hp <= 0 then return false end
+    if hp ~= nil and hp <= 0 then return false end -- dead
+    -- no health AND no server id = dead remnant or unspawned shell, never a live zombie
+    -- (live ones always carry simZombieId from the spawn packet)
+    if hp == nil and m:GetAttribute("simZombieId") == nil then return false end
     -- every zombie enemy name ends with "Zombie" (boss is the exception, caught below)
     if m.Name:sub(-6) == "Zombie" then return true end
     if m:GetAttribute("mainCrit") ~= nil or m:GetAttribute("simZombieId") ~= nil then return true end
