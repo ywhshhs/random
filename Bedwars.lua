@@ -201,4 +201,72 @@ task.spawn(function()
         end
     end
 end)
+-- Scaffold extras: Tower + SafeWalk (AlSploit has neither).
+-- getgenv().VW_Scaf = { Tower=false, TowerDelay=0.1, SafeWalk=false, EdgeDist=2.5 }
+getgenv().VW_Scaf = getgenv().VW_Scaf or { Tower = false, TowerDelay = 0.1, SafeWalk = false, EdgeDist = 2.5 }
+local VWS = getgenv().VW_Scaf
+task.spawn(function()
+    task.wait(5)
+    local Players = game:GetService("Players")
+    local Workspace = game:GetService("Workspace")
+    local RS = game:GetService("ReplicatedStorage")
+    local LP = Players.LocalPlayer
+    local Net = RS:WaitForChild("rbxts_include").node_modules["@rbxts"].net.out._NetManaged
+    local BlockEngine = RS.rbxts_include.node_modules["@easy-games"]["block-engine"].node_modules["@rbxts"].net.out._NetManaged
+    local BlockPlacing = BlockEngine:WaitForChild("BlockPlacing")
+    local function gridOf(w) return Vector3.new(math.round(w.X / 3), math.round(w.Y / 3), math.round(w.Z / 3)) end
+    local function heldBlock()
+        local c = LP.Character
+        local t = c and c:FindFirstChildOfClass("Tool")
+        if t and t.Name:find("wool", 1, true) then return t.Name end
+        local bp = LP:FindFirstChild("Backpack")
+        if bp then for _, x in ipairs(bp:GetChildren()) do
+            if x:IsA("Tool") and x.Name:find("wool", 1, true) then
+                local hum = c and c:FindFirstChildOfClass("Humanoid")
+                if hum then pcall(function() hum:EquipTool(x) end) end
+                return x.Name
+            end
+        end end
+        return t and t.Name or "wool_white"
+    end
+    local towerCache, lastTower = {}, 0
+    local lastSafe = nil
+    local rp = RaycastParams.new()
+    rp.FilterType = Enum.RaycastFilterType.Exclude
+    game:GetService("RunService").Heartbeat:Connect(function()
+        local c = LP.Character
+        local h = c and c:FindFirstChild("HumanoidRootPart")
+        local hum = c and c:FindFirstChildOfClass("Humanoid")
+        if not h or not hum or hum.Health <= 0 then return end
+        -- TOWER: pillar straight up while jumping (grid coords, verified rule)
+        if VWS.Tower and (hum.Jump or h.AssemblyLinearVelocity.Y > 1) then
+            if tick() - lastTower >= (VWS.TowerDelay or 0.1) then
+                local feet = h.Position - Vector3.new(0, h.Size.Y / 2 + hum.HipHeight * 1.5, 0)
+                local g = gridOf(feet)
+                local key = g.X .. "," .. g.Y .. "," .. g.Z
+                if not towerCache[key] or tick() - towerCache[key] > 5 then
+                    towerCache[key] = tick()
+                    lastTower = tick()
+                    pcall(function()
+                        BlockPlacing:InvokeServer({ blockType = heldBlock(), blockData = 0, position = g })
+                    end)
+                end
+            end
+        end
+        -- SAFEWALK: snap back to last grounded spot when walking off an edge
+        rp.FilterDescendantsInstances = { c }
+        if hum.FloorMaterial ~= Enum.Material.Air then
+            lastSafe = h.CFrame
+        elseif VWS.SafeWalk and lastSafe and hum.MoveDirection.Magnitude > 0.1 then
+            local ahead = h.Position + hum.MoveDirection * (VWS.EdgeDist or 2.5)
+            local downHere = Workspace:Raycast(h.Position, Vector3.new(0, -7, 0), rp)
+            local downAhead = Workspace:Raycast(ahead, Vector3.new(0, -7, 0), rp)
+            if not downHere and not downAhead then
+                h.AssemblyLinearVelocity = Vector3.zero
+                c:PivotTo(lastSafe)
+            end
+        end
+    end)
+end)
 print("[BW] VW-grade killaura injected (disable AlSploit Killaura)")
+print("[BW] scaffold extras loaded: getgenv().VW_Scaf")
