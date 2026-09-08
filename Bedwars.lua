@@ -23,7 +23,7 @@ local SettingsTab = Library:CreateSettingsPage(Window, Watermark, KeybindList)
 
 -- live feature state (written by UI callbacks below)
 local S = { KillAura = false, AuraRange = 16, TeamCheck = true, WallCheck = true,
-    Scaffold = false, PlaceDelay = 0.12, Tower = false, AutoEquip = true,
+    Scaffold = false, PlaceDelay = 0.12, Expand = 2, Tower = false, AutoEquip = true,
     Nuker = false, NukeRadius = 8, NukeDelay = 0.2, BedsOnly = false }
 
 do -- Combat
@@ -40,6 +40,7 @@ do -- World: Scaffold + Nuker (shapes from your solo log)
     local Sc = WorldTab:Section({ Name = "Scaffold", Side = 1 })
     Sc:Toggle({ Name = "Enabled", Flag = "Scaffold", Default = false, Callback = function(v) S.Scaffold = v end })
     Sc:Slider({ Name = "Place Delay", Min = 0.05, Max = 0.5, Default = 0.12, Suffix = "s", Decimals = 2, Flag = "PlaceDelay", Callback = function(v) S.PlaceDelay = v end })
+    Sc:Slider({ Name = "Expand", Min = 1, Max = 4, Default = 2, Suffix = "", Decimals = 0, Flag = "Expand", Callback = function(v) S.Expand = v end })
     Sc:Toggle({ Name = "Tower Mode", Flag = "Tower", Default = false, Callback = function(v) S.Tower = v end })
     Sc:Toggle({ Name = "Auto Equip Blocks", Flag = "AutoEquip", Default = true, Callback = function(v) S.AutoEquip = v end })
 
@@ -162,14 +163,17 @@ task.spawn(function()
     end
 end)
 
--- Scaffold + Nuker engine (block shapes copied from your solo log)
+-- Scaffold + Nuker engine
+-- STOLEN from AlSploit: scaffold uses BlockPlacingRemote {blockType, blockData, position}
+-- (NOT PlaceBlock -- that needs full mouseBlockInfo and gets rejected)
 local BlockNet = ReplicatedStorage.rbxts_include.node_modules["@easy-games"]["block-engine"].node_modules["@rbxts"].net.out._NetManaged
-local PlaceBlock = BlockNet:WaitForChild("PlaceBlock")
+local BlockPlacing = BlockNet:WaitForChild("BlockPlacing")
 local DamageBlock = BlockNet:WaitForChild("DamageBlock")
 
 local GRID = 3
 local function toGrid(w) return Vector3.new(math.round(w.X / GRID), math.round(w.Y / GRID), math.round(w.Z / GRID)) end
-local placedAt = {} -- gridKey -> time (don't refire placed cells)
+local function snap3(w) local g = toGrid(w) return Vector3.new(g.X * GRID, g.Y * GRID, g.Z * GRID) end
+local placedAt = {} -- worldPosKey -> time (don't refire placed cells)
 local lastPlaced = nil
 
 local TOOL_JUNK = { "sword", "pickaxe", "axe", "shears", "bow", "hammer", "scythe", "saber", "katana", "balloon", "pearl", "gadget", "kit" }
@@ -200,57 +204,35 @@ local function ensureBlocks()
     return false
 end
 
-local downParams = RaycastParams.new()
-downParams.FilterType = Enum.RaycastFilterType.Exclude
+-- AlSploit scaffold math: ahead cells at feet level, snapped to 3-grid, minimal args.
+-- feetBase = HRP - (HRP.Size.Y/2 + HipHeight*1.5); cell_i = feetBase + LookVector*i
 task.spawn(function()
     local lastPlace = 0
     while true do
         task.wait(0.03)
         if S.Scaffold then
+            local c = LocalPlayer.Character
             local h = myHRP()
+            local hum = c and c:FindFirstChildOfClass("Humanoid")
             local effDelay = S.Tower and math.min(S.PlaceDelay, 0.05) or S.PlaceDelay
-            if h and tick() - lastPlace >= effDelay and ensureBlocks() then
-                downParams.FilterDescendantsInstances = { LocalPlayer.Character }
-                local hit = Workspace:Raycast(h.Position, Vector3.new(0, -9, 0), downParams)
-                local target, place
-                if hit and hit.Normal.Y > 0.5 then
-                    -- standing over a block: fill the air cell below our feet
-                    target = toGrid(hit.Position - Vector3.new(0, 1.5, 0))
-                    place = target + Vector3.new(0, 1, 0)
-                elseif lastPlaced then
-                    -- bridging over void: extend from last placed block toward facing
-                    local f = h.CFrame.LookVector
-                    f = Vector3.new(f.X, 0, f.Z)
-                    if f.Magnitude > 0.01 then
-                        f = f.Unit
-                        place = lastPlaced + Vector3.new(math.round(f.X), 0, math.round(f.Z))
-                        if place == lastPlaced then place = lastPlaced + Vector3.new(0, 0, 0) end
-                        target = lastPlaced
-                    end
-                end
-                if place and target then
-                    local key = place.X .. "," .. place.Y .. "," .. place.Z
-                    if not placedAt[key] or tick() - placedAt[key] > 30 then
-                        local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
-                        local blockType = tool and tool.Name or "wool_white"
-                        local ok = pcall(function()
-                            PlaceBlock:InvokeServer({
-                                position = place,
-                                blockType = blockType,
-                                blockData = 0,
-                                mouseBlockInfo = {
-                                    target = { blockRef = { blockPosition = target }, hitPosition = hit and hit.Position or (target * GRID + Vector3.new(0, 1.5, 0)), hitNormal = Vector3.new(0, 1, 0) },
-                                    placementPosition = place,
-                                },
-                            })
+            if h and hum and tick() - lastPlace >= effDelay and ensureBlocks() then
+                local tool = c:FindFirstChildOfClass("Tool")
+                local blockType = tool and tool.Name or "wool_white"
+                local feetBase = h.Position - Vector3.new(0, h.Size.Y / 2 + hum.HipHeight * 1.5, 0)
+                local look = h.CFrame.LookVector
+                for i = 1, (S.Expand or 2) * 3 do
+                    local want = feetBase + Vector3.new(look.X * i, 0, look.Z * i)
+                    local pos = snap3(want)
+                    local key = pos.X .. "," .. pos.Y .. "," .. pos.Z
+                    if not placedAt[key] or tick() - placedAt[key] > 5 then
+                        pcall(function()
+                            BlockPlacing:InvokeServer({ blockType = blockType, blockData = 0, position = pos })
                         end)
-                        if ok then
-                            lastPlace = tick()
-                            placedAt[key] = tick()
-                            lastPlaced = place
-                        end
+                        placedAt[key] = tick()
+                        lastPlaced = pos
                     end
                 end
+                lastPlace = tick()
             end
         else
             lastPlaced = nil
