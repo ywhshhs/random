@@ -74,3 +74,131 @@ task.spawn(function()
         task.wait(5)
     end
 end)
+
+-- VW-grade killaura (stolen from Voidware 6872274481.lua). TURN ALSploit Killaura OFF.
+-- Upgrades over stock: 0.02s pacing + controller timestamp reset, {value} boxing,
+-- reach pull -14 only past 14st, spear double-hit, HitSlow throttle, one target/tick.
+getgenv().VW = getgenv().VW or { Killaura = true, Range = 18, HitSlow = 0, WallCheck = true, TeamCheck = true }
+local VW = getgenv().VW
+task.spawn(function()
+    task.wait(5) -- let AlSploit + game controllers load
+    local Players = game:GetService("Players")
+    local Workspace = game:GetService("Workspace")
+    local RS = game:GetService("ReplicatedStorage")
+    local LP = Players.LocalPlayer
+    local Cam = Workspace.CurrentCamera
+    local Net = RS:WaitForChild("rbxts_include").node_modules["@rbxts"].net.out._NetManaged
+    local SwordHit = Net:WaitForChild("SwordHit")
+    local SwingMiss = Net:WaitForChild("SwordSwingMiss")
+    -- real SwordController for cooldown reset (best effort; needs debug lib)
+    local SwordControl = nil
+    pcall(function()
+        local knitMod = LP.PlayerScripts.TS.knit
+        local setup = require(knitMod).setup
+        local KC = debug.getupvalue(setup, 9)
+        SwordControl = KC and KC.Controllers and KC.Controllers.SwordController or nil
+    end)
+    local function attackValue(v) return { value = v } end -- exact VW shape
+    local function myHRP() local c = LP.Character return c and c:FindFirstChild("HumanoidRootPart") end
+    local function heldSword()
+        local c = LP.Character
+        local t = c and c:FindFirstChildOfClass("Tool")
+        if t and (t.Name:find("sword", 1, true) or t.Name:find("saber", 1, true) or t.Name:find("scythe", 1, true) or t.Name:find("hammer", 1, true) or t.Name:find("katana", 1, true)) then return t end
+        local bp = LP:FindFirstChild("Backpack")
+        if bp then for _, x in ipairs(bp:GetChildren()) do
+            if x:IsA("Tool") and (x.Name:find("sword", 1, true) or x.Name:find("saber", 1, true)) then return x end
+        end end
+        return t
+    end
+    local function invInstance(tool)
+        if not tool then return nil end
+        local inv = RS:FindFirstChild("Inventories")
+        local mine = inv and inv:FindFirstChild(LP.Name)
+        return (mine and mine:FindFirstChild(tool.Name)) or tool
+    end
+    local wallP = RaycastParams.new()
+    wallP.FilterType = Enum.RaycastFilterType.Exclude
+    while true do
+        if VW.Killaura then
+            local ok = pcall(function()
+                local h = myHRP()
+                if not h then return end
+                -- nearest alive enemy
+                local best, bestD = nil, VW.Range
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if p ~= LP then
+                        if VW.TeamCheck and p.Team ~= nil and LP.Team ~= nil and p.Team == LP.Team then continue end
+                        local c = p.Character
+                        local hrp = c and c:FindFirstChild("HumanoidRootPart")
+                        local hum = c and c:FindFirstChildOfClass("Humanoid")
+                        if hrp and hum and hum.Health > 0 then
+                            local d = (hrp.Position - h.Position).Magnitude
+                            if d <= bestD then
+                                if VW.WallCheck then
+                                    wallP.FilterDescendantsInstances = { LP.Character, c }
+                                    if Workspace:Raycast(Cam.CFrame.Position, hrp.Position - Cam.CFrame.Position, wallP) then continue end
+                                end
+                                best, bestD = c, d
+                            end
+                        end
+                    end
+                end
+                if best then
+                    local root = best:FindFirstChild("HumanoidRootPart")
+                    local sword = heldSword()
+                    if root and sword then
+                        local weapon = invInstance(sword)
+                        -- VW reach pull: only past 14st, minus 14 (not 14.4)
+                        local selfpos = h.Position
+                        if VW.Range > 14 and bestD > 14.4 then
+                            selfpos = h.Position + (CFrame.lookAt(h.Position, root.Position).LookVector * (bestD - 14))
+                        end
+                        -- VW pacing: stamp controller to server-now (0.02s floor)
+                        if SwordControl then
+                            pcall(function()
+                                SwordControl.lastAttack = Workspace:GetServerTimeNow()
+                                SwordControl.lastSwingServerTime = Workspace:GetServerTimeNow()
+                            end)
+                        end
+                        local dir = (root.Position - Cam.CFrame.Position).Unit
+                        SwingMiss:FireServer({ weapon = weapon, chargeRatio = 0 })
+                        SwordHit:FireServer({
+                            weapon = weapon,
+                            chargedAttack = { chargeRatio = 0 },
+                            entityInstance = best,
+                            validate = {
+                                raycast = { cameraPosition = attackValue(Cam.CFrame.Position), cursorDirection = attackValue(dir) },
+                                targetPosition = attackValue(root.Position),
+                                selfPosition = attackValue(selfpos),
+                            },
+                        })
+                        -- VW spear double-hit
+                        local bp = LP:FindFirstChild("Backpack")
+                        if bp then for _, x in ipairs(bp:GetChildren()) do
+                            if x:IsA("Tool") and x.Name:find("spear", 1, true) then
+                                local hum = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+                                if hum then pcall(function() hum:EquipTool(x) end) end
+                                SwordHit:FireServer({
+                                    weapon = invInstance(x),
+                                    chargedAttack = { chargeRatio = 0 },
+                                    entityInstance = best,
+                                    validate = {
+                                        raycast = { cameraPosition = attackValue(Cam.CFrame.Position), cursorDirection = attackValue(dir) },
+                                        targetPosition = attackValue(root.Position),
+                                        selfPosition = attackValue(selfpos),
+                                    },
+                                })
+                                break
+                            end
+                        end end
+                    end
+                end
+            end)
+            if not ok then task.wait(1) end
+            task.wait(math.max(0.02, (VW.HitSlow or 0) / 10))
+        else
+            task.wait(0.25)
+        end
+    end
+end)
+print("[BW] VW-grade killaura injected (disable AlSploit Killaura)")
