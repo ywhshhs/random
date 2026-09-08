@@ -15,6 +15,9 @@ if not (http_request or request or httprequest) then
 end
 
 local src = game:HttpGet("https://raw.githubusercontent.com/ywhshhs/sss/main/alsploitLEEEEEAK.lua")
+-- fetch guard: a failed/blocked fetch returns an error page, never patch that
+assert(type(src) == "string" and #src > 100000 and src:find("Scaffold", 1, true),
+    "[BW] fetch failed (got " .. tostring(src and #src) .. " bytes, expected 400k+ AlSploit source). Check network/executor HTTP.")
 
 -- patch 1: drop the dead `if false` block at the top
 src = src:gsub("^if false%s+then%s+local _unused = 0%s+end%s*", "", 1)
@@ -25,9 +28,14 @@ local nviz
 src, nviz = src:gsub("task%.wait%(0%.15%)", "task.wait(0.03)")
 print("[BW] visualizer-wait patches:", nviz)
 -- patch 4: Expand slider 4 -> 6 max, default 2 -> 3
+-- cosmetic patches must NEVER brick loading (upstream edits change whitespace).
+-- Miss = warn + run unpatched, not assert.
 local function spliceOnce(hay, needle, repl, tag)
     local a, b = hay:find(needle, 1, true) -- plain find, no patterns
-    assert(a, "[BW] patch missed: " .. tag)
+    if not a then
+        warn("[BW] cosmetic patch skipped (upstream changed): " .. tag)
+        return hay
+    end
     return hay:sub(1, a - 1) .. repl .. hay:sub(b + 1)
 end
 src = spliceOnce(src,
