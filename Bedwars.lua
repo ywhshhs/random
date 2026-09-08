@@ -119,6 +119,9 @@ task.spawn(function()
     local wallP = RaycastParams.new()
     wallP.FilterType = Enum.RaycastFilterType.Exclude
     while true do
+        -- defensive clamps (survive raw-table edits bypassing BW.set)
+        VW.Range = math.clamp(tonumber(VW.Range) or 18, 5, 30)
+        VW.HitSlow = math.clamp(tonumber(VW.HitSlow) or 0, 0, 20)
         if VW.Killaura then
             local ok = pcall(function()
                 local h = myHRP()
@@ -239,8 +242,10 @@ task.spawn(function()
         local hum = c and c:FindFirstChildOfClass("Humanoid")
         if not h or not hum or hum.Health <= 0 then return end
         -- TOWER: pillar straight up while jumping (grid coords, verified rule)
+        VWS.TowerDelay = math.clamp(tonumber(VWS.TowerDelay) or 0.1, 0.03, 0.5)
+        VWS.EdgeDist = math.clamp(tonumber(VWS.EdgeDist) or 2.5, 1, 6)
         if VWS.Tower and (hum.Jump or h.AssemblyLinearVelocity.Y > 1) then
-            if tick() - lastTower >= (VWS.TowerDelay or 0.1) then
+            if tick() - lastTower >= VWS.TowerDelay then
                 local feet = h.Position - Vector3.new(0, h.Size.Y / 2 + hum.HipHeight * 1.5, 0)
                 local g = gridOf(feet)
                 local key = g.X .. "," .. g.Y .. "," .. g.Z
@@ -268,5 +273,118 @@ task.spawn(function()
         end
     end)
 end)
+-- Robust config: one schema, validated setters, clamping, save/load.
+-- getgenv().BW.show()  -> prints everything
+-- getgenv().BW.set("killaura.range", 22) / getgenv().BW.get("scaf.towerdelay")
+-- getgenv().BW.reset() / getgenv().BW.save() / getgenv().BW.load()
+getgenv().BW = getgenv().BW or {}
+local BW = getgenv().BW
+local SCHEMA = {
+    killaura = { desc = "VW-grade aura (disable AlSploit Killaura)" },
+    ["killaura.enabled"]  = { t = "b", d = true },
+    ["killaura.range"]    = { t = "n", d = 18, min = 5, max = 30 },
+    ["killaura.hitslow"]  = { t = "n", d = 0, min = 0, max = 20 },
+    ["killaura.wallcheck"] = { t = "b", d = true },
+    ["killaura.teamcheck"] = { t = "b", d = true },
+    scaf = { desc = "Scaffold extras" },
+    ["scaf.tower"]      = { t = "b", d = false },
+    ["scaf.towerdelay"] = { t = "n", d = 0.1, min = 0.03, max = 0.5 },
+    ["scaf.safewalk"]   = { t = "b", d = false },
+    ["scaf.edgedist"]   = { t = "n", d = 2.5, min = 1, max = 6 },
+}
+local STORE = {}
+local SECMAP = { killaura = { tab = "VW", keys = { enabled = "Killaura", range = "Range", hitslow = "HitSlow", wallcheck = "WallCheck", teamcheck = "TeamCheck" } },
+                 scaf = { tab = "VW_Scaf", keys = { tower = "Tower", towerdelay = "TowerDelay", safewalk = "SafeWalk", edgedist = "EdgeDist" } } }
+local function readLive(sec, key)
+    local m = SECMAP[sec]
+    local tab = getgenv()[m.tab]
+    return tab and tab[m.keys[key]] or nil
+end
+local function writeLive(sec, key, v)
+    local m = SECMAP[sec]
+    getgenv()[m.tab] = getgenv()[m.tab] or {}
+    getgenv()[m.tab][m.keys[key]] = v
+end
+local function coerce(rule, v)
+    if rule.t == "b" then
+        if type(v) == "boolean" then return v end
+        if v == 1 or v == "on" or v == "true" then return true end
+        if v == 0 or v == "off" or v == "false" then return false end
+        return nil
+    else
+        local n = tonumber(v)
+        if not n then return nil end
+        return math.clamp(n, rule.min, rule.max)
+    end
+end
+function BW.set(path, v)
+    path = tostring(path):lower()
+    local rule = SCHEMA[path]
+    if not rule or not rule.t then
+        local valid = {}
+        for k, r in pairs(SCHEMA) do if r.t then table.insert(valid, k) end end
+        table.sort(valid)
+        print("[BW] unknown option '" .. path .. "'. valid: " .. table.concat(valid, ", "))
+        return false
+    end
+    local cv = coerce(rule, v)
+    if cv == nil then
+        print("[BW] bad value for '" .. path .. "' (want " .. (rule.t == "b" and "boolean" or ("number " .. rule.min .. "-" .. rule.max)) .. ")")
+        return false
+    end
+    local sec, key = path:match("^([^.]+)%.([^.]+)$")
+    STORE[path] = cv
+    writeLive(sec, key, cv)
+    print("[BW] " .. path .. " = " .. tostring(cv))
+    return true
+end
+function BW.get(path)
+    path = tostring(path):lower()
+    if STORE[path] ~= nil then return STORE[path] end
+    local rule = SCHEMA[path]
+    if rule and rule.t then
+        local sec, key = path:match("^([^.]+)%.([^.]+)$")
+        local lv = readLive(sec, key)
+        if lv ~= nil then local cv = coerce(rule, lv) if cv ~= nil then STORE[path] = cv return cv end end
+        return rule.d
+    end
+    return nil
+end
+function BW.show()
+    local keys = {}
+    for k, r in pairs(SCHEMA) do if r.t then table.insert(keys, k) end end
+    table.sort(keys)
+    print("--- BW config ---")
+    for _, k in ipairs(keys) do print(string.format("  %-20s = %s", k, tostring(BW.get(k)))) end
+end
+function BW.reset()
+    for k, r in pairs(SCHEMA) do if r.t then BW.set(k, r.d) end end
+    print("[BW] defaults restored")
+end
+local SAVE_FILE = "bw_config.json"
+function BW.save()
+    local ok, js = pcall(function() return game:GetService("HttpService"):JSONEncode(STORE) end)
+    if not ok then print("[BW] save failed: no JSON") return false end
+    if writefile then local wok = pcall(writefile, SAVE_FILE, js) print(wok and "[BW] saved" or "[BW] save failed: writefile") return wok end
+    print("[BW] save unavailable (no writefile); config lives in getgenv")
+    return false
+end
+function BW.load()
+    if not (isfile and readfile) then print("[BW] load unavailable (no isfile/readfile)") return false end
+    local ok, has = pcall(isfile, SAVE_FILE)
+    if not ok or not has then print("[BW] no save found") return false end
+    local ok2, js = pcall(readfile, SAVE_FILE)
+    if not ok2 then print("[BW] read failed") return false end
+    local ok3, t = pcall(function() return game:GetService("HttpService"):JSONDecode(js) end)
+    if not ok3 or type(t) ~= "table" then print("[BW] save corrupted") return false end
+    for k, v in pairs(t) do BW.set(k, v) end
+    print("[BW] save loaded")
+    return true
+end
+-- seed live tables from schema defaults (first run) and push through validation
+for k, r in pairs(SCHEMA) do if r.t then
+    local sec, key = k:match("^([^.]+)%.([^.]+)$")
+    if readLive(sec, key) == nil then writeLive(sec, key, r.d) else BW.get(k) end
+end end
 print("[BW] VW-grade killaura injected (disable AlSploit Killaura)")
-print("[BW] scaffold extras loaded: getgenv().VW_Scaf")
+print("[BW] config ready: getgenv().BW.show()")
