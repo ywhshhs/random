@@ -1,6 +1,6 @@
 -- bullshitxd main (step 1): 4 tabs + barebones aimbot (lock only, no checks).
--- Bump UI_URL when source/ui.lua changes upstream.
-local UI_URL = "https://raw.githubusercontent.com/ywhshhs/bs-xd/ccd85117db62527a0b380e73ed84c33313f02ba8/source/ui.lua"
+-- Bump UI_URL when bullshitxd_ui.lua changes upstream (mobile-fixed sample UI).
+local UI_URL = "https://raw.githubusercontent.com/ywhshhs/random/ad67aa227bf55a11c6bd9b2aab8674519cba35e1/bullshitxd_ui.lua"
 
 if getgenv().bsxd then
     pcall(function() getgenv().bsxd.unload() end)
