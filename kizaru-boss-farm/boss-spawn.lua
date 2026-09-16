@@ -9,7 +9,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local player = Players.LocalPlayer
 
 -- Paths
-local bossPath = Workspace.Map["Boss Spawn"]["Kizaru Boss[Lv.425]"]["Kizaru Boss[Lv.425]"]
+local bossSpawn = Workspace.Map["Boss Spawn"]["Kizaru Boss[Lv.425]"]
 local reduceTimeNPC = Workspace.Map.NPCs.KizaruReduceTime
 local attackRemote = ReplicatedStorage.Remotes.RemoteEvents.Skills.Move
 
@@ -97,8 +97,11 @@ local function teleportBehindBoss(bossPart)
 end
 
 -- Attack loop
-local function attackBoss(bossPart)
-    while enabled and bossPart and bossPart.Parent do
+local function attackBoss()
+    while enabled do
+        local exists, bossPart = bossExists()
+        if not exists then break end
+
         local character = player.Character
         if not character then break end
         local hrp = character:FindFirstChild("HumanoidRootPart")
@@ -116,15 +119,22 @@ end
 
 -- Check if boss exists
 local function bossExists()
-    local boss = bossPath:FindFirstChildWhichIsA("BasePart")
-        or bossPath:FindFirstChildWhichIsA("Model")
-    if boss then
-        return true, boss
+    if not bossSpawn or not bossSpawn.Parent then return false, nil end
+
+    -- Find the actual boss part inside the model
+    local bossPart = bossSpawn:FindFirstChild("HumanoidRootPart")
+        or bossSpawn:FindFirstChildWhichIsA("BasePart")
+        or bossSpawn.PrimaryPart
+
+    if bossPart then
+        return true, bossPart
     end
-    -- Also check directly
-    if bossPath:IsA("BasePart") or bossPath:IsA("Model") then
-        return true, bossPath
+
+    -- If bossSpawn itself is a BasePart
+    if bossSpawn:IsA("BasePart") then
+        return true, bossSpawn
     end
+
     return false, nil
 end
 
@@ -147,7 +157,7 @@ local function mainLoop()
             task.wait(ATTACK_DELAY)
             teleportBehindBoss(bossPart)
             task.wait(0.1)
-            attackBoss(bossPart)
+            attackBoss()
 
             -- After attack loop ends (boss dead or despawned), continue cycle
             statusLabel.Text = "Status: Boss defeated. Restarting..."
