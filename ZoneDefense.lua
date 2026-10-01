@@ -13,7 +13,7 @@ local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 
-local Cfg = { ESP = false, Sky = false, SkyH = 30 }
+local Cfg = { ESP = false, Sky = false, SkyH = 30, POI = false }
 getgenv().ZD = Cfg
 
 local RunService = game:GetService("RunService")
@@ -109,7 +109,7 @@ sg.Parent = game:GetService("CoreGui")
 
 local countLb = nil
 local f = Instance.new("Frame")
-f.Size = UDim2.new(0, 200, 0, 130)
+f.Size = UDim2.new(0, 200, 0, 156)
 f.Position = UDim2.new(0, 20, 0.5, -65)
 f.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
 f.BorderSizePixel = 0
@@ -148,39 +148,80 @@ end
 
 local espBtn = makeButton(36, "[OFF] ESP")
 local skyBtn = makeButton(68, "[OFF] Sky Aimbot")
+local poiBtn = makeButton(100, "[OFF] POI Farm")
 
--- sky lift only: +20 up, anchored hover. No aiming yet.
+-- shared state + helpers (aimbot system reused by both Sky and POI Farm)
 local savedGround, skyPos, aimTarget, lookSm = nil, nil, nil, nil
+local function skyDisable()
+    local h = HRP()
+    if h then
+        h.Anchored = false
+        if savedGround then
+            LocalPlayer.Character:PivotTo(CFrame.new(savedGround + Vector3.new(0, 3, 0)))
+        end
+        h.AssemblyLinearVelocity = Vector3.zero
+    end
+    savedGround, skyPos, aimTarget, lookSm = nil, nil, nil, nil
+    workspace.CurrentCamera.CameraType = Enum.CameraType.Custom
+end
+local function armAt(pos)
+    -- arm the sky aimbot anchored at pos (hover re-pin + camera aim reuse this)
+    local h = HRP()
+    if not h then return end
+    savedGround = h.Position
+    skyPos = pos
+    local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    if hum and hum.Seated then hum.Seated = false end
+    h.Anchored = true
+    LocalPlayer.Character:PivotTo(CFrame.new(skyPos))
+    h.AssemblyLinearVelocity = Vector3.zero
+end
+
 skyBtn.MouseButton1Click:Connect(function()
     Cfg.Sky = not Cfg.Sky
+    Cfg.POI = false
+    poiBtn.Text = "[OFF] POI Farm"
     skyBtn.Text = (Cfg.Sky and "[ON] " or "[OFF] ") .. "Sky Aimbot"
     local h = HRP()
     if Cfg.Sky then
-        if h then
-            savedGround = h.Position
-            skyPos = savedGround + Vector3.new(0, Cfg.SkyH, 0)
-            local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-            if hum and hum.Seated then hum.Seated = false end
-            h.Anchored = true
-            LocalPlayer.Character:PivotTo(CFrame.new(skyPos))
-            h.AssemblyLinearVelocity = Vector3.zero
+        if h then armAt(h.Position + Vector3.new(0, Cfg.SkyH, 0)) end
+    else
+        skyDisable()
+    end
+end)
+
+poiBtn.MouseButton1Click:Connect(function()
+    Cfg.POI = not Cfg.POI
+    poiBtn.Text = (Cfg.POI and "[ON] " or "[OFF] ") .. "POI Farm"
+    if Cfg.POI then
+        local poi = Workspace:FindFirstChild("eventPoiModel")
+        local ground = poi and poi:FindFirstChild("Ground")
+        if ground and ground:IsA("BasePart") then
+            -- center above the POI at the same height as the sky lift
+            Cfg.Sky = true
+            skyBtn.Text = "[ON] Sky Aimbot"
+            armAt(ground.Position + Vector3.new(0, Cfg.SkyH, 0))
+        else
+            Cfg.POI = false
+            poiBtn.Text = "[OFF] POI Farm (no POI)"
         end
     else
-        if h then
-            h.Anchored = false
-            if savedGround then
-                LocalPlayer.Character:PivotTo(CFrame.new(savedGround + Vector3.new(0, 3, 0)))
-            end
-            h.AssemblyLinearVelocity = Vector3.zero
-        end
-        savedGround, skyPos, aimTarget, lookSm = nil, nil, nil, nil
-        workspace.CurrentCamera.CameraType = Enum.CameraType.Custom
+        skyDisable()
+        skyBtn.Text = "[OFF] Sky Aimbot"
     end
 end)
 
 -- hold the hover (re-pin if knocked off) + pick closest target while up
 RunService.Heartbeat:Connect(function()
     if not Cfg.Sky or not skyPos then aimTarget, lookSm = nil, nil return end
+    -- POI farm: keep centered above the POI (follows it if it moves/respawns)
+    if Cfg.POI then
+        local poi = Workspace:FindFirstChild("eventPoiModel")
+        local ground = poi and poi:FindFirstChild("Ground")
+        if ground and ground:IsA("BasePart") then
+            skyPos = ground.Position + Vector3.new(0, Cfg.SkyH, 0)
+        end
+    end
     local h = HRP() if not h then return end
     if (h.Position - skyPos).Magnitude > 3 then
         h.Anchored = true
@@ -275,7 +316,7 @@ end)
 
 countLb = Instance.new("TextLabel")
 countLb.Size = UDim2.new(1, -20, 0, 18)
-countLb.Position = UDim2.new(0, 10, 0, 100)
+countLb.Position = UDim2.new(0, 10, 0, 132)
 countLb.BackgroundTransparency = 1
 countLb.Text = "zombies: 0"
 countLb.Font = Enum.Font.Gotham
