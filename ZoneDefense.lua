@@ -179,6 +179,30 @@ local function armAt(pos)
     h.AssemblyLinearVelocity = Vector3.zero
 end
 
+-- flexible POI finder: the POI relocates often and may spawn under a different
+-- name/path, so try the exact path first, then case-insensitive part names,
+-- then any workspace model with "poi" in its name
+local function findPOIGround()
+    local poi = Workspace:FindFirstChild("eventPoiModel")
+    if poi then
+        local g = poi:FindFirstChild("Ground")
+        if g and g:IsA("BasePart") then return g end
+        for _, d in ipairs(poi:GetDescendants()) do
+            if d:IsA("BasePart") and d.Name:lower() == "ground" then return d end
+        end
+    end
+    for _, d in ipairs(Workspace:GetChildren()) do
+        if d:IsA("Model") and d.Name:lower():find("poi", 1, true) then
+            local g = d:FindFirstChild("Ground")
+            if g and g:IsA("BasePart") then return g end
+            for _, dd in ipairs(d:GetDescendants()) do
+                if dd:IsA("BasePart") and dd.Name:lower():find("ground", 1, true) then return dd end
+            end
+        end
+    end
+    return nil
+end
+
 skyBtn.MouseButton1Click:Connect(function()
     Cfg.Sky = not Cfg.Sky
     Cfg.POI = false
@@ -196,16 +220,16 @@ poiBtn.MouseButton1Click:Connect(function()
     Cfg.POI = not Cfg.POI
     poiBtn.Text = (Cfg.POI and "[ON] " or "[OFF] ") .. "POI Farm"
     if Cfg.POI then
-        local poi = Workspace:FindFirstChild("eventPoiModel")
-        local ground = poi and poi:FindFirstChild("Ground")
-        if ground and ground:IsA("BasePart") then
+        local ground = findPOIGround()
+        if ground then
             -- center above the POI at the same height as the sky lift
             Cfg.Sky = true
             skyBtn.Text = "[ON] Sky Aimbot"
             armAt(ground.Position + Vector3.new(0, Cfg.SkyH, 0))
+            print("[ZD] POI armed at " .. ground:GetFullName())
         else
-            Cfg.POI = false
-            poiBtn.Text = "[OFF] POI Farm (no POI)"
+            -- POI relocates: stay armed, the loop auto-arms when one appears
+            print("[ZD] POI Farm waiting for a POI to spawn...")
         end
     else
         skyDisable()
@@ -215,13 +239,22 @@ end)
 
 -- hold the hover (re-pin if knocked off) + pick closest target while up
 RunService.Heartbeat:Connect(function()
+    -- POI farm armed but no POI yet: auto-arm the instant one spawns
+    if Cfg.POI and not Cfg.Sky then
+        local g = findPOIGround()
+        if g then
+            Cfg.Sky = true
+            skyBtn.Text = "[ON] Sky Aimbot"
+            armAt(g.Position + Vector3.new(0, Cfg.SkyH, 0))
+            print("[ZD] POI appeared, armed at " .. g:GetFullName())
+        end
+    end
     if not Cfg.Sky or not skyPos then aimTarget, lookSm = nil, nil return end
     -- POI farm: keep centered above the POI (follows it if it moves/respawns)
     if Cfg.POI then
-        local poi = Workspace:FindFirstChild("eventPoiModel")
-        local ground = poi and poi:FindFirstChild("Ground")
-        if ground and ground:IsA("BasePart") then
-            skyPos = ground.Position + Vector3.new(0, Cfg.SkyH, 0)
+        local g = findPOIGround()
+        if g then
+            skyPos = g.Position + Vector3.new(0, Cfg.SkyH, 0)
         end
     end
     local h = HRP() if not h then return end
@@ -235,9 +268,8 @@ RunService.Heartbeat:Connect(function()
     local eye = h.Position + Vector3.new(0, 3, 0)
     local poiCenter = nil
     if Cfg.POI then
-        local poi = Workspace:FindFirstChild("eventPoiModel")
-        local ground = poi and poi:FindFirstChild("Ground")
-        if ground and ground:IsA("BasePart") then poiCenter = ground.Position end
+        local g = findPOIGround()
+        if g then poiCenter = g.Position end
     end
     for _, z in ipairs(typeof(zombies) == "table" and zombies or {}) do
         local hd = aimPart(z)
