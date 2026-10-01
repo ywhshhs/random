@@ -179,6 +179,16 @@ local function armAt(pos)
     h.AssemblyLinearVelocity = Vector3.zero
 end
 
+local function pulseArm(pos)
+    -- force server sync: arm -> drop -> arm (on/off/on) so replication catches up
+    -- (users had to disable/re-enable manually for zombies to start spawning)
+    armAt(pos)
+    task.wait(0.15)
+    skyDisable()
+    task.wait(0.15)
+    armAt(pos)
+end
+
 -- flexible POI finder: the POI relocates often and may spawn under a different
 -- name/path, so try the exact path first, then case-insensitive part names,
 -- then any workspace model with "poi" in its name
@@ -210,7 +220,7 @@ skyBtn.MouseButton1Click:Connect(function()
     skyBtn.Text = (Cfg.Sky and "[ON] " or "[OFF] ") .. "Sky Aimbot"
     local h = HRP()
     if Cfg.Sky then
-        if h then armAt(h.Position + Vector3.new(0, Cfg.SkyH, 0)) end
+        if h then pulseArm(h.Position + Vector3.new(0, Cfg.SkyH, 0)) end
     else
         skyDisable()
     end
@@ -225,13 +235,14 @@ poiBtn.MouseButton1Click:Connect(function()
             -- center above the POI at the same height as the sky lift
             Cfg.Sky = true
             skyBtn.Text = "[ON] Sky Aimbot"
-            armAt(ground.Position + Vector3.new(0, Cfg.SkyH, 0))
+            pulseArm(ground.Position + Vector3.new(0, Cfg.SkyH, 0))
             print("[ZD] POI armed at " .. ground:GetFullName())
         else
             -- POI relocates: stay armed, the loop auto-arms when one appears
             print("[ZD] POI Farm waiting for a POI to spawn...")
         end
     else
+        Cfg.Sky = false
         skyDisable()
         skyBtn.Text = "[OFF] Sky Aimbot"
     end
@@ -245,7 +256,7 @@ RunService.Heartbeat:Connect(function()
         if g then
             Cfg.Sky = true
             skyBtn.Text = "[ON] Sky Aimbot"
-            armAt(g.Position + Vector3.new(0, Cfg.SkyH, 0))
+            pulseArm(g.Position + Vector3.new(0, Cfg.SkyH, 0))
             print("[ZD] POI appeared, armed at " .. g:GetFullName())
         end
     end
