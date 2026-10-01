@@ -33,6 +33,8 @@ end
 -- wall check: clear line from our eye to a target part
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
+rayParams.RespectCanCollide = true -- zombie ragdoll parts are CanCollide=false:
+-- they no longer block wall rays (was skipping close zombies -> targeting far ones)
 
 local function canSee(fromPos, targetModel, targetPart)
     if not targetPart then return false end
@@ -228,13 +230,22 @@ RunService.Heartbeat:Connect(function()
         LocalPlayer.Character:PivotTo(CFrame.new(skyPos))
         h.AssemblyLinearVelocity = Vector3.zero
     end
-    -- closest VISIBLE zombie to us
+    -- closest VISIBLE zombie to us (POI members first when farming)
     local best, bd = nil, math.huge
     local eye = h.Position + Vector3.new(0, 3, 0)
+    local poiCenter = nil
+    if Cfg.POI then
+        local poi = Workspace:FindFirstChild("eventPoiModel")
+        local ground = poi and poi:FindFirstChild("Ground")
+        if ground and ground:IsA("BasePart") then poiCenter = ground.Position end
+    end
     for _, z in ipairs(typeof(zombies) == "table" and zombies or {}) do
         local hd = aimPart(z)
         if hd then
             local d = (hd.Position - h.Position).Magnitude
+            -- farming the POI: ignore zombies that wandered far from it
+            -- (was busy targeting across the map instead of the ones closest to us)
+            if poiCenter and (hd.Position - poiCenter).Magnitude > 100 then continue end
             if d < bd and canSee(eye, z, hd) then best, bd = z, d end
         end
     end
@@ -256,9 +267,20 @@ end)
 -- camera: full free pitch (no axis locked), applied last so the game can't fight it.
 -- Scriptable only stops YOUR mouse fighting the script, not the pitch range.
 RunService:BindToRenderStep("ZD_Cam", Enum.RenderPriority.Camera.Value + 1, function()
-    if not Cfg.Sky or not aimTarget or not lookSm then return end
+    if not Cfg.Sky then return end
     local h = HRP() if not h then return end
     local cam = workspace.CurrentCamera
+    -- no target: look down at the ground below (POI center when farming), never the void
+    if not aimTarget or not lookSm then
+        pcall(function()
+            if cam.CameraType ~= Enum.CameraType.Scriptable then cam.CameraType = Enum.CameraType.Scriptable end
+            local eye = h.Position + Vector3.new(0, 3, 0)
+            local down = h.Position - Vector3.new(0, Cfg.SkyH, 0)
+            cam.CFrame = CFrame.new(eye, down)
+            cam.Focus = CFrame.new(down)
+        end)
+        return
+    end
     pcall(function()
         if cam.CameraType ~= Enum.CameraType.Scriptable then cam.CameraType = Enum.CameraType.Scriptable end
         local eye = h.Position + Vector3.new(0, 3, 0)
