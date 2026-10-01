@@ -153,7 +153,7 @@ local skyBtn = makeButton(68, "[OFF] Sky Aimbot")
 local poiBtn = makeButton(100, "[OFF] POI Farm")
 
 -- shared state + helpers (aimbot system reused by both Sky and POI Farm)
-local savedGround, skyPos, aimTarget, lookSm = nil, nil, nil, nil
+local savedGround, skyPos, aimTarget, lookSm, travelTarget = nil, nil, nil, nil, nil
 local function skyDisable()
     local h = HRP()
     if h then
@@ -163,30 +163,23 @@ local function skyDisable()
         end
         h.AssemblyLinearVelocity = Vector3.zero
     end
-    savedGround, skyPos, aimTarget, lookSm = nil, nil, nil, nil
+    savedGround, skyPos, aimTarget, lookSm, travelTarget = nil, nil, nil, nil, nil
     workspace.CurrentCamera.CameraType = Enum.CameraType.Custom
 end
-local function armAt(pos)
-    -- arm the sky aimbot anchored at pos (hover re-pin + camera aim reuse this)
+
+local function armTravel(pos)
+    -- arm WITHOUT teleporting: anchor here, glide to pos at 30 studs/s.
+    -- Continuous movement replicates naturally (teleports broke the spawn sync).
     local h = HRP()
     if not h then return end
     savedGround = h.Position
     skyPos = pos
+    travelTarget = pos
     local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
     if hum and hum.Seated then hum.Seated = false end
     h.Anchored = true
-    LocalPlayer.Character:PivotTo(CFrame.new(skyPos))
     h.AssemblyLinearVelocity = Vector3.zero
-end
-
-local function pulseArm(pos)
-    -- force server sync: arm -> drop -> arm (on/off/on) so replication catches up
-    -- (users had to disable/re-enable manually for zombies to start spawning)
-    armAt(pos)
-    task.wait(0.15)
-    skyDisable()
-    task.wait(0.15)
-    armAt(pos)
+    h.AssemblyAngularVelocity = Vector3.zero
 end
 
 -- flexible POI finder: the POI relocates often and may spawn under a different
@@ -220,7 +213,7 @@ skyBtn.MouseButton1Click:Connect(function()
     skyBtn.Text = (Cfg.Sky and "[ON] " or "[OFF] ") .. "Sky Aimbot"
     local h = HRP()
     if Cfg.Sky then
-        if h then pulseArm(h.Position + Vector3.new(0, Cfg.SkyH, 0)) end
+        if h then armTravel(h.Position + Vector3.new(0, Cfg.SkyH, 0)) end
     else
         skyDisable()
     end
@@ -235,8 +228,8 @@ poiBtn.MouseButton1Click:Connect(function()
             -- center above the POI at the same height as the sky lift
             Cfg.Sky = true
             skyBtn.Text = "[ON] Sky Aimbot"
-            pulseArm(ground.Position + Vector3.new(0, Cfg.SkyH, 0))
-            print("[ZD] POI armed at " .. ground:GetFullName())
+            armTravel(ground.Position + Vector3.new(0, Cfg.SkyH, 0))
+            print("[ZD] traveling to POI at " .. ground:GetFullName())
         else
             -- POI relocates: stay armed, the loop auto-arms when one appears
             print("[ZD] POI Farm waiting for a POI to spawn...")
@@ -249,27 +242,38 @@ poiBtn.MouseButton1Click:Connect(function()
 end)
 
 -- hold the hover (re-pin if knocked off) + pick closest target while up
-RunService.Heartbeat:Connect(function()
+RunService.Heartbeat:Connect(function(dt)
     -- POI farm armed but no POI yet: auto-arm the instant one spawns
     if Cfg.POI and not Cfg.Sky then
         local g = findPOIGround()
         if g then
             Cfg.Sky = true
             skyBtn.Text = "[ON] Sky Aimbot"
-            pulseArm(g.Position + Vector3.new(0, Cfg.SkyH, 0))
-            print("[ZD] POI appeared, armed at " .. g:GetFullName())
+            armTravel(g.Position + Vector3.new(0, Cfg.SkyH, 0))
+            print("[ZD] POI appeared, traveling to " .. g:GetFullName())
         end
     end
     if not Cfg.Sky or not skyPos then aimTarget, lookSm = nil, nil return end
-    -- POI farm: keep centered above the POI (follows it if it moves/respawns)
+    -- POI farm: keep tracking the POI center (follows it if it moves/respawns)
     if Cfg.POI then
         local g = findPOIGround()
         if g then
             skyPos = g.Position + Vector3.new(0, Cfg.SkyH, 0)
+            if travelTarget then travelTarget = skyPos end -- redirect glide if POI moves
         end
     end
     local h = HRP() if not h then return end
-    if (h.Position - skyPos).Magnitude > 3 then
+    -- glide toward the armed spot at 30 studs/s (continuous movement = server stays synced)
+    if travelTarget then
+        local d = (travelTarget - h.Position).Magnitude
+        if d <= 1 then
+            h.CFrame = CFrame.new(travelTarget)
+            travelTarget = nil
+        else
+            local step = math.min(30 * (dt or 0.016), d)
+            h.CFrame = CFrame.new(h.Position + (travelTarget - h.Position).Unit * step)
+        end
+    elseif (h.Position - skyPos).Magnitude > 3 then
         h.Anchored = true
         LocalPlayer.Character:PivotTo(CFrame.new(skyPos))
         h.AssemblyLinearVelocity = Vector3.zero
