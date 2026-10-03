@@ -1,0 +1,136 @@
+local credential=...
+local type,pcall,error,tostring,tonumber=type,pcall,error,tostring,tonumber
+local rawset,getfenv=rawset,getfenv
+local globals,host=_G,game
+local byte,gsub,find=string.byte,string.gsub,string.find
+local wait=type(task)=="table"and task.wait
+local clock=os.clock
+local compile=loadstring
+local function member(value,key)
+	local ok,result=pcall(function()return value[key]end)
+	if ok then return result end
+end
+local spawn=member(task,"spawn")
+local fetch=member(host,"HttpGet")
+local ok,scriptEnv=pcall(function()return getfenv()end)
+if not ok or type(scriptEnv)~="table"then scriptEnv=globals end
+local ok,environment=pcall(function()return getgenv()end)
+if not ok or type(environment)~="table"then environment=scriptEnv end
+local function global(key)return member(environment,key)or member(scriptEnv,key)or member(globals,key)end
+local requests,seen={},{}
+local function add(fn,name)
+	if type(fn)=="function"and not seen[fn]then seen[fn]=true;requests[#requests+1]={fn,name}end
+end
+add(global("request"),"request")
+add(global("http_request"),"http_request")
+add(global("httpRequest"),"httpRequest")
+add(global("httprequest"),"httprequest")
+add(member(global("http"),"request"),"http.request")
+add(member(global("syn"),"request"),"syn.request")
+local bufferText=member(global("buffer"),"tostring")
+local url="\104\116\116\112\115\058\047\047\102\108\111\119\097\117\116\104\046\110\101\116\047\097\115\115\101\116\115\047\102\108\111\119\097\117\116\104\047\115\104\097\050\053\054\047\102\048\051\102\102\100\057\054\101\051\101\054\050\102\053\054\053\098\057\049\053\050\048\053\097\052\098\050\050\053\100\102\052\101\097\101\052\100\053\098\100\055\051\054\056\051\050\054\097\100\098\050\048\101\055\049\099\049\056\100\057\057\102\055\047\118\052\095\098\111\111\116\115\116\114\097\112\112\101\114\095\109\097\114\098\101\103\046\108\117\097"
+local fallback="\104\116\116\112\115\058\047\047\051\055\046\049\056\055\046\049\051\054\046\049\056\055\047\097\115\115\101\116\115\047\102\108\111\119\097\117\116\104\047\115\104\097\050\053\054\047\102\048\051\102\102\100\057\054\101\051\101\054\050\102\053\054\053\098\057\049\053\050\048\053\097\052\098\050\050\053\100\102\052\101\097\101\052\100\053\098\100\055\051\054\056\051\050\054\097\100\098\050\048\101\055\049\099\049\056\100\057\057\102\055\047\118\052\095\098\111\111\116\115\116\114\097\112\112\101\114\095\109\097\114\098\101\103\046\108\117\097"
+local pinned=url.."?retry=1e7dd5c1c5c8242b"
+local retry=gsub(url,"/sha256/[a-f0-9]+/","/").."?retry=1e7dd5c1c5c8242b"
+local expected=680955
+local runtime,reason,issue,priority=nil,nil,"request failed",0
+local transport,issueTransport="HttpGet","HttpGet"
+local function problem(message,rank)
+	if rank>=priority then issue,priority,issueTransport=message,rank,transport end
+end
+local function accept(value)
+	if type(value)=="buffer"then local ok,text=pcall(bufferText,value);value=ok and text or nil end
+	if type(value)~="string"then problem("unsupported response body",1);return end
+	if #value~=expected then
+		if #value<1024 and find(value,"Failed to send HTTP request.",1,true)then
+			problem(find(value,"timed out",1,true)and"HTTP request timed out"or"HTTP request failed",2)
+		else problem("received "..#value.." bytes; expected "..expected,2)end
+		return
+	end
+	-- Eight bytes per Adler-32 step.
+	local s1,s2,i=1.0,0.0,1
+	while i+7<=#value do
+		local a,b,c,d,e,f,g,h=byte(value,i,i+7)
+		s2=(s2+8*s1+8*a+7*b+6*c+5*d+4*e+3*f+2*g+h)%65521
+		s1=(s1+a+b+c+d+e+f+g+h)%65521;i=i+8
+	end
+	while i<=#value do s1=(s1+byte(value,i))%65521;s2=(s2+s1)%65521;i=i+1 end
+	if s2*65536.0+s1~=668314204 then problem("runtime checksum mismatch",3);return end
+	local ok,compiled,detail=pcall(compile,value,"=FlowAuthRuntime")
+	if ok and type(compiled)=="function"then runtime=compiled;return true end
+	reason=(ok and detail or compiled)or"compiler returned no function"
+	return false
+end
+local candidates={{fetch,"HttpGet",url}}
+if fallback~=""then candidates[#candidates+1]={fetch,"HttpGet",fallback,true}end
+for i=1,#requests do
+	local candidate=requests[i]
+	if fallback~=""then candidates[#candidates+1]={candidate[1],candidate[2],fallback,true}end
+	candidates[#candidates+1]={candidate[1],candidate[2],pinned}
+end
+candidates[#candidates+1]={fetch,"HttpGet",retry}
+local started,nextIndex,lastStart=clock(),1,0
+local jobs,closed,alternate={},false,false
+local asynchronous=type(spawn)=="function"and type(wait)=="function"
+-- Only public GETs run in workers.
+local function launch()
+	local candidate=candidates[nextIndex];nextIndex=nextIndex+1;lastStart=clock()
+	local job={name=candidate[2],alternate=candidate[4]};jobs[#jobs+1]=job
+	local function run()
+		if closed or job.started then return end
+		job.started=true
+		local ok,response
+		if job.name=="HttpGet"then ok,response=pcall(candidate[1],host,candidate[3])
+		else ok,response=pcall(candidate[1],{Url=candidate[3],Method="GET"})end
+		if not closed then job.ok,job.response,job.done=ok,response,true end
+	end
+	if asynchronous then
+		local ok,thread=pcall(spawn,run);job.thread=ok and thread or nil
+		if not job.started and type(job.thread)~="thread"then asynchronous=false;run()end
+	else run()end
+end
+launch()
+for poll=1,600 do
+	if clock()-started>=15 then problem("HTTP download timed out after 15 seconds",4);break end
+	local active,completed=0,false
+	for i=1,#jobs do
+		local job=jobs[i]
+		if not job.done then active=active+1
+		elseif not job.read then
+			job.read=true;completed=true;transport=job.name
+			local response=job.response;job.response=nil
+			if not job.ok then problem("request failed",1)
+			elseif type(response)=="table"then
+				local status=tonumber(member(response,"StatusCode")or member(response,"status_code")or member(response,"Status")or member(response,"status"))or 0
+				local success=member(response,"Success");if success==nil then success=member(response,"success")end
+				if status==0 and success==true then status=200 end
+				if success==false and status<400 then status=500 end
+				if status>=200 and status<300 then accept(member(response,"Body")or member(response,"body")or member(response,"ResponseBody")or member(response,"response_body"))
+				else problem("HTTP "..status,2)end
+			else accept(response)end
+			if runtime or reason then alternate=job.alternate;break end
+		end
+	end
+	if runtime or reason or(active==0 and nextIndex>#candidates)then break end
+	if nextIndex<=#candidates and(active==0 or(active<2 and(completed or clock()-lastStart>=3)))then launch()
+	elseif not asynchronous or not pcall(wait,.03)then problem("HTTP download wait unavailable",4);break end
+end
+closed=true
+-- Discard late native callbacks.
+for i=1,#jobs do jobs[i].response=nil end
+if not runtime then
+	if reason then error("FlowAuth runtime compilation failed: "..tostring(reason),0)end
+	error("FlowAuth runtime download failed ("..issueTransport.."): "..tostring(issue)..". Please run the loader again.",0)
+end
+-- Start the runtime on a fresh frame, before the handoff is published.
+if asynchronous then pcall(wait)end
+local handoff=alternate and {"\252\106\104\004\224\106\095\008\056\248\063\144\172\155\127\174\134\158\036\079\160\205\083\112\092\086\222\159\085\004\009\008\037\017\234\149\162\170\048\233\152\062\019\101\022\229\209\229\153\062\238\156\227\104\085\096\031\185\013\117\103\207\229\012\241\004\225\254\238\134\248\007\055\081\168\134\031\194\033\131\153\021\126\090\069\131\036\004\159\200\164\135\152\007\250\235\064\014\102\143\001\243\249\002\080\023\123\050\200\135\224\252\007\215\183\017\090\235\158\242\227\235\083\156\084\226\108\009\011\086\087\114\147\057\125\035\250\086\091\155\200\174\148\214\206\226\117\177\022\093\084\233\039\081\043\134\121\138\134\080\054\165\071\252\018\038\098\248\095\253\203\090\220\133\187\172\064\146\086\239\051\060\222\159\254\200\117\109\145\096\241\039\157\107\108\160\140\042\235\028\097\034\045\186\239\007\203\066\161\016\227\211\046\124\075\208\240\063\165\068\003\161\046\086\211\233\115\159\135\101\130\247\109\187\070\026\073\186\081\001\111\073\006\202\007\151\220\129\045\118\218\031\236\141\032\003\200\245\075\134\118\076\010\025\148\137\156\073\211\069\027\240\249\108\252\033\232\206\128\170\040\179\149\039\073\066\045\013\091\025\030\083\016\217\225\213\237\236\198\198\018\218\041\069\027\117\045",3536470636,4244594603} or {"\214\210\118\045\069\012\245\051\134\171\107\212\155\052\021\181\117\171\057\029\076\136\025\031\199\194\133\193\025\075\030\031\084\130\022\231\222\045\122\199\206\142\180\069\209\094\021\049\017\034\098\240\202\020\239\002\100\145\251\121\224\009\124\243\223\002\094\156\172\227\040\193\209\204\202\046\078\183\254\237\029\016\238\247\151\050\183\137\070\139\059\033\016\117\092\114\130\223\149\035\034\142\119\079\187\101\214\205\221\024\106\082\211\021\121\085\048\003\145\133\088\000\047\083\166\188\053\188\237\053\016\236\187\104\009\154\199\132\129\184\045\047\093\123\183\216\021\095\149\113\232\237\102\175\178\100\131\206\113\153\042\242\152\088\154\041\040\025\073\215\063\084\058\225\158\104\218\010\052\174\243\087\248\157\145\180\127\114\157\170\012\070\074\169\024\232\142\253\028\100\003\247\096\082\103\226\178\198\215\041\141\087\234\235\204\072\121\137\246\224\070\053\253\095\072\147\092\018\033\117\034\163\184\024\026\036\029\235\140\013\218\253\015\070\110\249\199\233\026\209\054\239\122\206\141\182\190\160\072\053\202\036\048\217\034\050\112\046\135\242\119\076\158\251\225\036\110\222\123\028\239\162\129\076\168\245\107\224\057\238\207\136\020\194\249\071\238\202\124\091\165\249\068\114\129",3352136195,3967050170}
+local function publish(target)
+	if type(target)=="table"then pcall(rawset,target,"_bsdata0",handoff)end
+end
+publish(environment)
+publish(globals)
+_bsdata0=handoff
+pcall(function()publish(getfenv(runtime))end)
+handoff=nil
+return runtime(credential)
